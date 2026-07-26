@@ -39,6 +39,7 @@ export interface RegisterInstallationResult {
   error?: string;
   created_sim?: boolean;
   needs_review?: boolean;
+  replaced_sim?: Sim | null;
   sim?: Sim;
   installation?: Installation;
 }

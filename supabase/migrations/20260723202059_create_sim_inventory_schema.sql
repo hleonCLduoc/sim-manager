@@ -154,7 +154,8 @@ CREATE OR REPLACE FUNCTION register_installation(
   p_location_detail text DEFAULT NULL,
   p_imei text DEFAULT NULL,
   p_action text DEFAULT 'instalar',
-  p_notes text DEFAULT NULL
+  p_notes text DEFAULT NULL,
+  p_replace_existing boolean DEFAULT false
 ) RETURNS jsonb
 LANGUAGE plpgsql
 AS $$
@@ -163,7 +164,9 @@ DECLARE
   v_sim_id uuid;
   v_location_id uuid;
   v_created_sim boolean := false;
+  v_replaced_sim sims%ROWTYPE;
   v_installation installations%ROWTYPE;
+  v_existing_installation installations%ROWTYPE;
 BEGIN
   -- Normalizar número de SIM
   p_sim_number := btrim(p_sim_number);
@@ -197,6 +200,44 @@ BEGIN
     RETURNING id INTO v_location_id;
   END IF;
 
+  -- Si se instala y se solicita reemplazo, retirar la SIM actual de la ubicación
+  IF p_action = 'instalar' AND p_replace_existing AND v_location_id IS NOT NULL THEN
+    SELECT i.* INTO v_existing_installation
+    FROM installations i
+    WHERE i.location_id = v_location_id
+      AND i.action = 'instalar'
+      AND i.sim_number <> p_sim_number
+      AND NOT EXISTS (
+        SELECT 1 FROM installations i2
+        WHERE i2.location_id = v_location_id
+          AND i2.sim_number = i.sim_number
+          AND i2.action = 'retirar'
+          AND i2.installed_at > i.installed_at
+      )
+    ORDER BY i.installed_at DESC
+    LIMIT 1;
+
+    IF FOUND THEN
+      SELECT * INTO v_replaced_sim FROM sims WHERE sim_number = v_existing_installation.sim_number;
+
+      UPDATE sims
+      SET status = 'libre', updated_at = now()
+      WHERE sim_number = v_existing_installation.sim_number;
+
+      INSERT INTO installations (sim_id, sim_number, location_id, location_name, location_detail, imei, action, notes)
+      VALUES (
+        v_replaced_sim.id,
+        v_replaced_sim.sim_number,
+        v_location_id,
+        p_location_name,
+        p_location_detail,
+        v_existing_installation.imei,
+        'retirar',
+        'Retiro automático por reemplazo en ' || p_location_name
+      );
+    END IF;
+  END IF;
+
   -- Actualizar el estado de la SIM
   IF p_action = 'instalar' THEN
     UPDATE sims
@@ -220,6 +261,7 @@ BEGIN
     'success', true,
     'created_sim', v_created_sim,
     'needs_review', v_sim.needs_review OR v_created_sim,
+    'replaced_sim', to_jsonb(v_replaced_sim),
     'sim', to_jsonb(v_sim),
     'installation', to_jsonb(v_installation)
   );

@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Scorecards } from '@/components/scorecards';
 import { MasterSearch } from '@/components/master-search';
+import { LocationsPanel } from '@/components/locations-panel';
 import { InstallationsForm } from '@/components/installations-form';
 import { InstallationsHistory } from '@/components/installations-history';
 import { InventoryTable } from '@/components/inventory-table';
@@ -65,7 +66,7 @@ function App({
   can: (perm: 'can_batch_import' | 'can_batch_delete' | 'can_manage_users') => boolean;
   isSuperAdmin: boolean;
 }) {
-  const { sims, installations, stats, loading, refresh } = useAppData();
+  const { sims, locations, installations, stats, loading, refresh } = useAppData();
   const [tab, setTab] = useState('instalaciones');
 
   const canManageUsers = can('can_manage_users');
@@ -181,6 +182,17 @@ function App({
           {/* DASHBOARD */}
           <TabsContent value="dashboard" className="space-y-6 outline-none">
             <Scorecards stats={stats} loading={loading} />
+            <section className="space-y-3">
+              <h2 className="text-sm font-semibold text-muted-foreground">
+                Ubicaciones
+              </h2>
+              <LocationsPanel
+                locations={locations}
+                installations={installations}
+                sims={sims}
+                loading={loading}
+              />
+            </section>
             <section className="space-y-3">
               <h2 className="text-sm font-semibold text-muted-foreground">
                 Buscador maestro

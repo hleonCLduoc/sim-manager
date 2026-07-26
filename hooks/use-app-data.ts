@@ -2,10 +2,11 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import type { Installation, Sim } from '@/lib/types';
+import type { Installation, Location, Sim } from '@/lib/types';
 
 interface AppData {
   sims: Sim[];
+  locations: Location[];
   installations: Installation[];
   stats: { total: number; instaladas: number; libres: number; pendientes: number };
   loading: boolean;
@@ -14,6 +15,7 @@ interface AppData {
 
 export function useAppData(): AppData {
   const [sims, setSims] = useState<Sim[]>([]);
+  const [locations, setLocations] = useState<Location[]>([]);
   const [installations, setInstallations] = useState<Installation[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -21,14 +23,16 @@ export function useAppData(): AppData {
     setLoading(true);
     Promise.all([
       supabase.from('sims').select('*').order('updated_at', { ascending: false }),
+      supabase.from('locations').select('*').order('name', { ascending: true }),
       supabase
         .from('installations')
         .select('*')
         .order('installed_at', { ascending: false })
-        .limit(20),
+        .limit(50),
     ])
-      .then(([simsRes, instRes]) => {
+      .then(([simsRes, locRes, instRes]) => {
         setSims((simsRes.data as Sim[]) ?? []);
+        setLocations((locRes.data as Location[]) ?? []);
         setInstallations((instRes.data as Installation[]) ?? []);
       })
       .catch((err) => {
@@ -48,5 +52,5 @@ export function useAppData(): AppData {
     pendientes: sims.filter((s) => s.needs_review).length,
   };
 
-  return { sims, installations, stats, loading, refresh };
+  return { sims, locations, installations, stats, loading, refresh };
 }

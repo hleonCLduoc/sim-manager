@@ -50,7 +50,7 @@ rows.forEach((row, idx) => {
   });
 
   if (isInstalled) {
-    const locationName = bus || 'Sin bus';
+    const locationName = bus || 'Sin ubicación';
     const locationDetail = linea || null;
     const locKey = `${locationName}|${locationDetail || ''}`;
 
