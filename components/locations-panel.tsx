@@ -143,9 +143,6 @@ export function LocationsPanel({ locations, installations, sims, loading }: Loca
                 {paged.map((loc) => {
                   const current = currentInstallationsByLocation.byId.get(loc.id)
                     || currentInstallationsByLocation.byNameDetail.get(buildLocationKey(loc.name, loc.detail));
-                  const currentSim = current
-                    ? sims.find((s) => s.sim_number === current.sim_number)
-                    : undefined;
 
                   return (
                     <TableRow key={loc.id}>
@@ -160,12 +157,7 @@ export function LocationsPanel({ locations, installations, sims, loading }: Loca
                       </TableCell>
                       <TableCell>
                         {current ? (
-                          <div className="flex flex-col gap-0.5">
-                            <span className="font-mono text-xs">{current.sim_number}</span>
-                            <span className="text-xs text-muted-foreground">
-                              {currentSim?.plan || 'Sin plan'}
-                            </span>
-                          </div>
+                          <span className="font-mono text-xs">{current.sim_number}</span>
                         ) : (
                           <Badge variant="secondary" className="text-xs">
                             Sin SIM
@@ -248,6 +240,9 @@ function LocationDetail({
   }, [installations, location]);
 
   const currentSim = history.find((h) => h.action === 'instalar');
+  const currentSimRecord = currentSim
+    ? sims.find((s) => s.sim_number === currentSim.sim_number)
+    : undefined;
 
   return (
     <Card>
@@ -269,6 +264,9 @@ function LocationDetail({
               · SIM actual:{' '}
               <span className="font-mono font-medium">{currentSim.sim_number}</span>
             </span>
+          )}
+          {currentSimRecord?.plan && (
+            <span className="ml-2">· Plan: {currentSimRecord.plan}</span>
           )}
         </CardDescription>
       </CardHeader>
