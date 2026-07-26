@@ -56,10 +56,12 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
   const [locationFocused, setLocationFocused] = useState(false);
   const [allLocations, setAllLocations] = useState<Location[]>([]);
   const [allInstallations, setAllInstallations] = useState<Installation[]>([]);
+  const [allSims, setAllSims] = useState<Sim[]>([]);
   const [replaceDialogOpen, setReplaceDialogOpen] = useState(false);
   const [pendingReplace, setPendingReplace] = useState<LocationSuggestion | null>(null);
 
   const locationInputRef = useRef<HTMLInputElement>(null);
+  const simInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     supabase
@@ -73,6 +75,11 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
       .eq('action', 'instalar')
       .order('installed_at', { ascending: false })
       .then(({ data }) => setAllInstallations((data as Installation[]) ?? []));
+    supabase
+      .from('sims')
+      .select('*')
+      .order('sim_number', { ascending: true })
+      .then(({ data }) => setAllSims((data as Sim[]) ?? []));
   }, []);
 
   const currentSimByLocation = useMemo(() => {
@@ -118,6 +125,22 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
     return scored;
   }, [locationQuery, allLocations, currentSimByLocation]);
 
+  const simSuggestions = useMemo<Sim[]>(() => {
+    const term = simNumber.trim();
+    if (!term || term.length < 3) return [];
+    const termLower = term.toLowerCase();
+    const termDigits = term.replace(/\D/g, '');
+    return allSims
+      .filter((s) => {
+        const simLower = s.sim_number.toLowerCase();
+        const simDigits = s.sim_number.replace(/\D/g, '');
+        if (simLower.includes(termLower)) return true;
+        if (termDigits.length >= 6 && simDigits.endsWith(termDigits)) return true;
+        return false;
+      })
+      .slice(0, 8);
+  }, [simNumber, allSims]);
+
   const exactLocation = useMemo(() => {
     const name = locationName.trim();
     if (!name) return undefined;
@@ -134,9 +157,16 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
   }, [exactLocation, currentSimByLocation]);
 
   function handleScanDetected(code: string) {
-    setSimNumber(code);
+    const cleaned = code.replace(/\s/g, '').trim();
+    setSimNumber(cleaned);
     setExistingSim(undefined);
-    checkSim(code);
+    checkSim(cleaned);
+  }
+
+  function selectSimSuggestion(s: Sim) {
+    setSimNumber(s.sim_number);
+    setExistingSim(s);
+    simInputRef.current?.blur();
   }
 
   async function checkSim(value: string) {
@@ -308,21 +338,49 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
                     Escanear
                   </Button>
                 </div>
-                <Input
-                  id="sim"
-                  value={simNumber}
-                  onChange={(e) => {
-                    setSimNumber(e.target.value);
-                    setExistingSim(undefined);
-                  }}
-                  onBlur={(e) => {
-                    setSimFocused(false);
-                    checkSim(e.target.value);
-                  }}
-                  onFocus={() => setSimFocused(true)}
-                  placeholder="Ej. 8956120…"
-                  className="font-mono"
-                />
+                <div className="relative">
+                  <Input
+                    ref={simInputRef}
+                    id="sim"
+                    value={simNumber}
+                    onChange={(e) => {
+                      setSimNumber(e.target.value);
+                      setExistingSim(undefined);
+                    }}
+                    onBlur={(e) => {
+                      setSimFocused(false);
+                      checkSim(e.target.value);
+                    }}
+                    onFocus={() => setSimFocused(true)}
+                    placeholder="Ej. 8956120… o los últimos 6 dígitos"
+                    className="font-mono"
+                    autoComplete="off"
+                  />
+                  {simFocused && simSuggestions.length > 0 && (
+                    <div className="absolute z-20 mt-1 max-h-64 w-full overflow-auto rounded-md border bg-popover shadow-md">
+                      {simSuggestions.map((s) => (
+                        <button
+                          key={s.id}
+                          type="button"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => selectSimSuggestion(s)}
+                          className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-accent"
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono">{s.sim_number}</span>
+                            <span className="text-xs text-muted-foreground">
+                              {s.plan || 'Sin plan'}
+                            </span>
+                          </div>
+                          <SimStatusBadge
+                            status={s.status}
+                            needsReview={s.needs_review}
+                          />
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 {simNumber.trim() !== '' && existingSim && (
                   <div className="flex items-center gap-2 text-xs">
                     <span className="text-muted-foreground">

@@ -16,11 +16,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Camera, Loader2, X, ScanLine, CheckCircle2 } from 'lucide-react';
-import {
-  BrowserMultiFormatReader,
-  IScannerControls,
-} from '@zxing/browser';
+import { Camera, Loader2, X, ScanLine, CheckCircle2, RefreshCcw, AlertTriangle } from 'lucide-react';
+import { BrowserMultiFormatReader, IScannerControls } from '@zxing/browser';
 import { toast } from 'sonner';
 
 interface BarcodeScannerProps {
@@ -37,24 +34,26 @@ export function BarcodeScanner({ open, onOpenChange, onDetected }: BarcodeScanne
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | undefined>();
   const [starting, setStarting] = useState(false);
   const [lastCode, setLastCode] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [permissionState, setPermissionState] = useState<'unknown' | 'granted' | 'denied'>('unknown');
+
+  const isSecureContext = typeof window !== 'undefined' &&
+    (window.location.protocol === 'https:' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
 
   useEffect(() => {
     if (!open) return;
 
+    setError(null);
+    setLastCode(null);
     const reader = new BrowserMultiFormatReader();
     readerRef.current = reader;
 
-    BrowserMultiFormatReader.listVideoInputDevices()
-      .then((videoDevices) => {
-        setDevices(videoDevices);
-        const back = videoDevices.find((d) =>
-          /back|rear|environment/i.test(d.label)
-        );
-        setSelectedDeviceId((back || videoDevices[0])?.deviceId);
-      })
-      .catch(() => {
-        toast.error('No se pudo acceder a la cámara del dispositivo');
-      });
+    if (!isSecureContext) {
+      setError('La cámara solo funciona en conexiones seguras (HTTPS). En localhost también debería funcionar.');
+      return;
+    }
+
+    requestCameraAccess();
 
     return () => {
       stopScanner();
@@ -67,19 +66,68 @@ export function BarcodeScanner({ open, onOpenChange, onDetected }: BarcodeScanne
     return () => stopScanner();
   }, [open, selectedDeviceId]);
 
-  function stopScanner() {
-    if (controlsRef.current) {
-      controlsRef.current.stop();
-      controlsRef.current = null;
+  async function requestCameraAccess() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setError('Tu navegador no soporta acceso a la cámara.');
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      stream.getTracks().forEach((track) => track.stop());
+      setPermissionState('granted');
+      await loadDevices();
+    } catch (err) {
+      setPermissionState('denied');
+      setError('Permiso de cámara denegado. Activa el permiso en la configuración del navegador.');
     }
   }
 
-  function startScanner(deviceId: string) {
+  async function loadDevices() {
+    try {
+      const videoDevices = await BrowserMultiFormatReader.listVideoInputDevices();
+      setDevices(videoDevices);
+      if (videoDevices.length === 0) {
+        setError('No se detectaron cámaras en este dispositivo.');
+        return;
+      }
+      const back = videoDevices.find((d) => /back|rear|environment/i.test(d.label));
+      setSelectedDeviceId((back || videoDevices[0])?.deviceId);
+    } catch {
+      setError('No se pudo listar las cámaras del dispositivo.');
+    }
+  }
+
+  function stopScanner() {
+    if (controlsRef.current) {
+      try {
+        controlsRef.current.stop();
+      } catch {
+        // ignore
+      }
+      controlsRef.current = null;
+    }
+    if (videoRef.current && videoRef.current.srcObject) {
+      const stream = videoRef.current.srcObject as MediaStream;
+      stream.getTracks().forEach((track) => track.stop());
+      videoRef.current.srcObject = null;
+    }
+  }
+
+  async function startScanner(deviceId: string) {
     if (!readerRef.current || !videoRef.current) return;
     setStarting(true);
+    setError(null);
     stopScanner();
-    readerRef.current
-      .decodeFromVideoDevice(deviceId, videoRef.current, (result, err) => {
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { deviceId: { exact: deviceId } },
+      });
+      videoRef.current.srcObject = stream;
+      await videoRef.current.play();
+
+      const controls = await readerRef.current.decodeFromVideoElement(videoRef.current, (result, err) => {
         if (result) {
           const code = result.getText().trim();
           setLastCode(code);
@@ -87,15 +135,13 @@ export function BarcodeScanner({ open, onOpenChange, onDetected }: BarcodeScanne
           toast.success('Número leído', { description: code });
           handleClose();
         }
-      })
-      .then((controls) => {
-        controlsRef.current = controls;
-        setStarting(false);
-      })
-      .catch(() => {
-        setStarting(false);
-        toast.error('No se pudo iniciar la cámara');
       });
+      controlsRef.current = controls;
+      setStarting(false);
+    } catch {
+      setStarting(false);
+      setError('No se pudo iniciar la cámara seleccionada. Prueba con otra cámara o recarga la página.');
+    }
   }
 
   function handleClose() {
@@ -103,8 +149,13 @@ export function BarcodeScanner({ open, onOpenChange, onDetected }: BarcodeScanne
     onOpenChange(false);
   }
 
+  function handleRetry() {
+    setError(null);
+    requestCameraAccess();
+  }
+
   return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v) stopScanner(); onOpenChange(v); }}>
+    <Dialog open={open} onOpenChange={(v) => { if (!v) handleClose(); }}>
       <DialogContent className="max-w-md overflow-hidden p-0 sm:rounded-2xl">
         <DialogHeader className="px-5 pt-5">
           <DialogTitle className="flex items-center gap-2">
@@ -122,6 +173,7 @@ export function BarcodeScanner({ open, onOpenChange, onDetected }: BarcodeScanne
             className="h-[320px] w-full object-cover"
             muted
             playsInline
+            autoPlay
           />
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
             <div className="relative h-40 w-[85%] max-w-xs rounded-xl border-2 border-white/70 shadow-[0_0_0_1000px_rgba(0,0,0,0.35)]">
@@ -129,20 +181,28 @@ export function BarcodeScanner({ open, onOpenChange, onDetected }: BarcodeScanne
             </div>
           </div>
           {starting && (
-            <div className="absolute inset-0 flex items-center justify-center bg-black/50">
-              <Loader2 className="h-8 w-8 animate-spin text-white" />
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/60 text-white">
+              <Loader2 className="h-8 w-8 animate-spin" />
+              <p className="text-sm">Iniciando cámara…</p>
+            </div>
+          )}
+          {error && !starting && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/80 p-6 text-center text-white">
+              <AlertTriangle className="h-10 w-10 text-warning-foreground" />
+              <p className="text-sm">{error}</p>
+              <Button size="sm" variant="secondary" onClick={handleRetry}>
+                <RefreshCcw className="mr-2 h-4 w-4" />
+                Reintentar
+              </Button>
             </div>
           )}
         </div>
 
         <div className="space-y-3 px-5 pb-5">
-          {devices.length > 1 && (
+          {devices.length > 1 && permissionState === 'granted' && (
             <div className="space-y-1.5">
               <p className="text-xs font-medium text-muted-foreground">Cámara</p>
-              <Select
-                value={selectedDeviceId}
-                onValueChange={setSelectedDeviceId}
-              >
+              <Select value={selectedDeviceId} onValueChange={setSelectedDeviceId}>
                 <SelectTrigger className="w-full">
                   <SelectValue placeholder="Selecciona la cámara" />
                 </SelectTrigger>
@@ -155,6 +215,12 @@ export function BarcodeScanner({ open, onOpenChange, onDetected }: BarcodeScanne
                 </SelectContent>
               </Select>
             </div>
+          )}
+
+          {permissionState === 'denied' && (
+            <p className="text-xs text-muted-foreground">
+              Si ya bloqueaste el permiso, debes habilitarlo manualmente en la configuración de tu navegador para este sitio.
+            </p>
           )}
 
           {lastCode && (
