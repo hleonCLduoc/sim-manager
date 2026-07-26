@@ -19,21 +19,48 @@ export function useAppData(): AppData {
   const [installations, setInstallations] = useState<Installation[]>([]);
   const [loading, setLoading] = useState(true);
 
+  async function fetchAllInstallations(): Promise<Installation[]> {
+    const pageSize = 1000;
+    let from = 0;
+    let keepGoing = true;
+    const rows: Installation[] = [];
+
+    while (keepGoing) {
+      const to = from + pageSize - 1;
+      const { data, error } = await supabase
+        .from('installations')
+        .select('*')
+        .order('installed_at', { ascending: false })
+        .range(from, to);
+
+      if (error) {
+        throw error;
+      }
+
+      const batch = (data as Installation[]) ?? [];
+      rows.push(...batch);
+
+      if (batch.length < pageSize) {
+        keepGoing = false;
+      } else {
+        from += pageSize;
+      }
+    }
+
+    return rows;
+  }
+
   const refresh = useCallback(() => {
     setLoading(true);
     Promise.all([
       supabase.from('sims').select('*').order('updated_at', { ascending: false }),
       supabase.from('locations').select('*').order('name', { ascending: true }),
-      supabase
-        .from('installations')
-        .select('*')
-        .order('installed_at', { ascending: false })
-        .limit(50),
+      fetchAllInstallations(),
     ])
       .then(([simsRes, locRes, instRes]) => {
         setSims((simsRes.data as Sim[]) ?? []);
         setLocations((locRes.data as Location[]) ?? []);
-        setInstallations((instRes.data as Installation[]) ?? []);
+        setInstallations((instRes as Installation[]) ?? []);
       })
       .catch((err) => {
         console.error('Error cargando datos', err);

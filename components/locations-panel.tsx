@@ -27,23 +27,41 @@ interface LocationsPanelProps {
 
 const PAGE_SIZE = 10;
 
+function normalizeLocationPart(value: string | null | undefined): string {
+  return (value || '').trim().toLowerCase();
+}
+
+function buildLocationKey(name: string | null | undefined, detail: string | null | undefined): string {
+  return `${normalizeLocationPart(name)}|${normalizeLocationPart(detail)}`;
+}
+
 export function LocationsPanel({ locations, installations, sims, loading }: LocationsPanelProps) {
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(0);
   const [selectedLocation, setSelectedLocation] = useState<Location | null>(null);
 
   const currentInstallationsByLocation = useMemo(() => {
-    const map = new Map<string, Installation>();
+    const byId = new Map<string, Installation>();
+    const byNameDetail = new Map<string, Installation>();
+
+    const upsertLatest = (map: Map<string, Installation>, key: string, row: Installation) => {
+      const existing = map.get(key);
+      if (!existing || new Date(row.installed_at) > new Date(existing.installed_at)) {
+        map.set(key, row);
+      }
+    };
+
     installations
       .filter((i) => i.action === 'instalar')
       .forEach((i) => {
-        const key = `${i.location_name}|${i.location_detail || ''}`;
-        const existing = map.get(key);
-        if (!existing || new Date(i.installed_at) > new Date(existing.installed_at)) {
-          map.set(key, i);
+        if (i.location_id) {
+          upsertLatest(byId, i.location_id, i);
         }
+        const key = buildLocationKey(i.location_name, i.location_detail);
+        if (key !== '|') upsertLatest(byNameDetail, key, i);
       });
-    return map;
+
+    return { byId, byNameDetail };
   }, [installations]);
 
   const filtered = useMemo(() => {
@@ -123,9 +141,8 @@ export function LocationsPanel({ locations, installations, sims, loading }: Loca
               </TableHeader>
               <TableBody>
                 {paged.map((loc) => {
-                  const current = currentInstallationsByLocation.get(
-                    `${loc.name}|${loc.detail || ''}`
-                  );
+                  const current = currentInstallationsByLocation.byId.get(loc.id)
+                    || currentInstallationsByLocation.byNameDetail.get(buildLocationKey(loc.name, loc.detail));
                   const currentSim = current
                     ? sims.find((s) => s.sim_number === current.sim_number)
                     : undefined;
@@ -217,11 +234,12 @@ function LocationDetail({
   onBack: () => void;
 }) {
   const history = useMemo(() => {
+    const locationKey = buildLocationKey(location.name, location.detail);
     return installations
       .filter(
         (i) =>
-          i.location_name === location.name &&
-          i.location_detail === location.detail
+          i.location_id === location.id ||
+          buildLocationKey(i.location_name, i.location_detail) === locationKey
       )
       .sort(
         (a, b) =>
