@@ -59,6 +59,8 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
   const [allSims, setAllSims] = useState<Sim[]>([]);
   const [replaceDialogOpen, setReplaceDialogOpen] = useState(false);
   const [pendingReplace, setPendingReplace] = useState<LocationSuggestion | null>(null);
+  const [scanConfirmOpen, setScanConfirmOpen] = useState(false);
+  const [pendingScannedSim, setPendingScannedSim] = useState('');
 
   const locationInputRef = useRef<HTMLInputElement>(null);
   const simInputRef = useRef<HTMLInputElement>(null);
@@ -162,18 +164,9 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
     return digits.startsWith('89');
   }
 
-  async function handleScanDetected(code: string) {
-    const cleaned = code.replace(/\D/g, '').trim();
+  async function lookupScannedSim(cleaned: string) {
     setExistingSim(undefined);
 
-    if (!isPlausibleIccid(cleaned)) {
-      toast.warning('Lectura OCR poco confiable', {
-        description: `Se detectó ${cleaned || 'vacío'}. Verifica y escribe el SIM manualmente.`,
-      });
-      return;
-    }
-
-    // Primero intentamos encontrarla como disponible para instalación.
     const { data: freeSim } = await supabase
       .from('sims')
       .select('*')
@@ -191,7 +184,6 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
       return;
     }
 
-    // Si no está libre, verificamos si existe en cualquier estado.
     const { data: anySim } = await supabase
       .from('sims')
       .select('*')
@@ -216,11 +208,55 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
 
     setExistingSim(null);
     toast.warning('SIM no encontrada en el inventario', {
-      description: `Lectura detectada: ${cleaned}. Revisa el número antes de registrar.`,
+      description: `Lectura detectada: ${cleaned}. Puedes editarla antes de registrar.`,
     });
 
-    // No autocompletar si no existe: evita registrar por error una lectura OCR falsa.
-    setSimNumber('');
+    // Si no existe, dejamos el valor en el input para edición manual confirmada.
+    setSimNumber(cleaned);
+    requestAnimationFrame(() => {
+      simInputRef.current?.focus();
+      simInputRef.current?.select();
+    });
+  }
+
+  async function handleScanDetected(code: string) {
+    const cleaned = code.replace(/\D/g, '').trim();
+
+    if (!isPlausibleIccid(cleaned)) {
+      toast.warning('Lectura OCR poco confiable', {
+        description: `Se detectó ${cleaned || 'vacío'}. Verifica y escribe el SIM manualmente.`,
+      });
+      return;
+    }
+
+    setPendingScannedSim(cleaned);
+    setScanConfirmOpen(true);
+  }
+
+  async function confirmAndLookupScannedSim() {
+    const candidate = pendingScannedSim;
+    setScanConfirmOpen(false);
+    if (!candidate) return;
+    await lookupScannedSim(candidate);
+  }
+
+  function editScannedSimManually() {
+    const candidate = pendingScannedSim;
+    setScanConfirmOpen(false);
+    if (!candidate) return;
+    setExistingSim(undefined);
+    setSimNumber(candidate);
+    requestAnimationFrame(() => {
+      simInputRef.current?.focus();
+      simInputRef.current?.select();
+    });
+    toast.info('Puedes editar el número escaneado antes de buscar o registrar.');
+  }
+
+  function rescanSim() {
+    setScanConfirmOpen(false);
+    setPendingScannedSim('');
+    setScannerOpen(true);
   }
 
   function selectSimSuggestion(s: Sim) {
@@ -623,6 +659,40 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
               )}
               Sí, reemplazar
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={scanConfirmOpen} onOpenChange={setScanConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Confirmar SIM detectada</DialogTitle>
+            <DialogDescription>
+              El lector detectó este número. Elige cómo continuar para evitar errores de OCR.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 rounded-lg bg-muted p-4 text-sm">
+            <div className="flex justify-between gap-3">
+              <span className="text-muted-foreground">Número leído:</span>
+              <span className="break-all font-mono font-medium">{pendingScannedSim}</span>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Consejo: si no coincide exactamente con la tarjeta, usa "Editar" o "Reescanear".
+            </p>
+          </div>
+          <DialogFooter className="gap-2 sm:justify-between">
+            <Button variant="outline" onClick={rescanSim}>
+              <ScanLine className="mr-2 h-4 w-4" />
+              Reescanear
+            </Button>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={editScannedSimManually}>
+                Editar
+              </Button>
+              <Button onClick={confirmAndLookupScannedSim}>
+                Usar y buscar
+              </Button>
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>
