@@ -31,6 +31,7 @@ import { supabase } from '@/lib/supabase';
 import type { Installation, Sim } from '@/lib/types';
 import { formatDateCL, formatDateOnlyCL } from '@/lib/format';
 import { toast } from 'sonner';
+import * as XLSX from 'xlsx';
 
 interface ReportsProps {
   sims: Sim[];
@@ -49,25 +50,11 @@ export function Reports({ sims, loading }: ReportsProps) {
     pendientes: sims.filter((s) => s.needs_review).length,
   };
 
-  function downloadCSV(filename: string, rows: string[][], headers: string[]) {
-    const escape = (val: string) => {
-      const s = String(val ?? '');
-      if (s.includes(',') || s.includes('"') || s.includes('\n')) {
-        return `"${s.replace(/"/g, '""')}"`;
-      }
-      return s;
-    };
-    const csv = [
-      headers.map(escape).join(','),
-      ...rows.map((r) => r.map(escape).join(',')),
-    ].join('\n');
-    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
+  function downloadExcel(filename: string, rows: string[][], headers: string[]) {
+    const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Datos');
+    XLSX.writeFile(workbook, filename);
   }
 
   function exportInventory(type: ReportType) {
@@ -80,7 +67,7 @@ export function Reports({ sims, loading }: ReportsProps) {
 
       if (type === 'full') {
         filtered = sims;
-        filename = `inventario_completo_${dateStamp()}.csv`;
+        filename = `inventario_completo_${dateStamp()}.xlsx`;
         headers = ['Numero SIM', 'Plan', 'Estado', 'IMEI', 'Pendiente Revision', 'Actualizado'];
         rows = filtered.map((s) => [
           s.sim_number,
@@ -92,7 +79,7 @@ export function Reports({ sims, loading }: ReportsProps) {
         ]);
       } else if (type === 'installed') {
         filtered = sims.filter((s) => s.status === 'instalada');
-        filename = `sims_instaladas_${dateStamp()}.csv`;
+        filename = `sims_instaladas_${dateStamp()}.xlsx`;
         headers = ['Numero SIM', 'Plan', 'IMEI', 'Pendiente Revision', 'Actualizado'];
         rows = filtered.map((s) => [
           s.sim_number,
@@ -103,7 +90,7 @@ export function Reports({ sims, loading }: ReportsProps) {
         ]);
       } else if (type === 'free') {
         filtered = sims.filter((s) => s.status === 'libre');
-        filename = `sims_libres_${dateStamp()}.csv`;
+        filename = `sims_libres_${dateStamp()}.xlsx`;
         headers = ['Numero SIM', 'Plan', 'IMEI', 'Pendiente Revision', 'Actualizado'];
         rows = filtered.map((s) => [
           s.sim_number,
@@ -121,7 +108,7 @@ export function Reports({ sims, loading }: ReportsProps) {
         return;
       }
 
-      downloadCSV(filename, rows, headers);
+      downloadExcel(filename, rows, headers);
       toast.success(`Informe descargado: ${filename}`);
     } catch {
       toast.error('Error al generar el informe');
@@ -165,7 +152,7 @@ export function Reports({ sims, loading }: ReportsProps) {
         it.notes || '',
       ]);
 
-      downloadCSV(`historial_movimientos_${dateStamp()}.csv`, rows, headers);
+      downloadExcel(`historial_movimientos_${dateStamp()}.xlsx`, rows, headers);
       toast.success('Historial descargado');
     } catch {
       toast.error('Error al descargar el historial');
@@ -189,7 +176,7 @@ export function Reports({ sims, loading }: ReportsProps) {
           Informes y reportes
         </h2>
         <p className="mt-0.5 text-sm text-muted-foreground">
-          Descarga informes completos de tu inventario en formato CSV (compatible con Excel).
+          Descarga informes completos de tu inventario en formato Excel (.xlsx).
         </p>
       </div>
 
@@ -368,7 +355,7 @@ function ExportCard({
         ) : (
           <>
             <Download className="mr-2 h-4 w-4" />
-            Descargar CSV
+            Descargar Excel
           </>
         )}
       </Button>
