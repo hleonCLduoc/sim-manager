@@ -16,13 +16,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Camera, Loader2, X, ScanLine, CheckCircle2, RefreshCcw, AlertTriangle } from 'lucide-react';
-import { BrowserMultiFormatReader, IScannerControls } from '@zxing/browser';
+import { Camera, Loader2, X, ScanLine, CheckCircle2, RefreshCcw, AlertTriangle, Aperture } from 'lucide-react';
 import { toast } from 'sonner';
-
-function createReader() {
-  return new BrowserMultiFormatReader();
-}
+import { createWorker, PSM } from 'tesseract.js';
 
 interface BarcodeScannerProps {
   open: boolean;
@@ -32,14 +28,14 @@ interface BarcodeScannerProps {
 
 export function BarcodeScanner({ open, onOpenChange, onDetected }: BarcodeScannerProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const controlsRef = useRef<IScannerControls | null>(null);
-  const readerRef = useRef<BrowserMultiFormatReader | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | undefined>();
   const [starting, setStarting] = useState(false);
   const [lastCode, setLastCode] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [permissionState, setPermissionState] = useState<'unknown' | 'granted' | 'denied'>('unknown');
+  const [processing, setProcessing] = useState(false);
 
   const isSecureContext = typeof window !== 'undefined' &&
     (window.location.protocol === 'https:' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
@@ -49,8 +45,7 @@ export function BarcodeScanner({ open, onOpenChange, onDetected }: BarcodeScanne
 
     setError(null);
     setLastCode(null);
-    const reader = createReader();
-    readerRef.current = reader;
+    setProcessing(false);
 
     if (!isSecureContext) {
       setError('La cámara solo funciona en conexiones seguras (HTTPS). En localhost también debería funcionar.');
@@ -60,14 +55,14 @@ export function BarcodeScanner({ open, onOpenChange, onDetected }: BarcodeScanne
     requestCameraAccess();
 
     return () => {
-      stopScanner();
+      stopCamera();
     };
   }, [open]);
 
   useEffect(() => {
-    if (!open || !selectedDeviceId || !videoRef.current || !readerRef.current) return;
-    startScanner(selectedDeviceId);
-    return () => stopScanner();
+    if (!open || !selectedDeviceId || !videoRef.current) return;
+    startCamera(selectedDeviceId);
+    return () => stopCamera();
   }, [open, selectedDeviceId]);
 
   async function requestCameraAccess() {
@@ -89,40 +84,35 @@ export function BarcodeScanner({ open, onOpenChange, onDetected }: BarcodeScanne
 
   async function loadDevices() {
     try {
-      const videoDevices = await BrowserMultiFormatReader.listVideoInputDevices();
-      setDevices(videoDevices);
-      if (videoDevices.length === 0) {
+      const videoDevices = await navigator.mediaDevices.enumerateDevices();
+      const cameras = videoDevices.filter((d) => d.kind === 'videoinput');
+      setDevices(cameras);
+      if (cameras.length === 0) {
         setError('No se detectaron cámaras en este dispositivo.');
         return;
       }
-      const back = videoDevices.find((d) => /back|rear|environment/i.test(d.label));
-      setSelectedDeviceId((back || videoDevices[0])?.deviceId);
+      const back = cameras.find((d) => /back|rear|environment/i.test(d.label));
+      setSelectedDeviceId((back || cameras[0])?.deviceId);
     } catch {
       setError('No se pudo listar las cámaras del dispositivo.');
     }
   }
 
-  function stopScanner() {
-    if (controlsRef.current) {
-      try {
-        controlsRef.current.stop();
-      } catch {
-        // ignore
-      }
-      controlsRef.current = null;
+  function stopCamera() {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
     }
-    if (videoRef.current && videoRef.current.srcObject) {
-      const stream = videoRef.current.srcObject as MediaStream;
-      stream.getTracks().forEach((track) => track.stop());
+    if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
   }
 
-  async function startScanner(deviceId: string) {
-    if (!readerRef.current || !videoRef.current) return;
+  async function startCamera(deviceId: string) {
+    if (!videoRef.current) return;
     setStarting(true);
     setError(null);
-    stopScanner();
+    stopCamera();
 
     try {
       const constraints: MediaStreamConstraints = {
@@ -134,19 +124,9 @@ export function BarcodeScanner({ open, onOpenChange, onDetected }: BarcodeScanne
         },
       };
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      streamRef.current = stream;
       videoRef.current.srcObject = stream;
       await videoRef.current.play();
-
-      const controls = await readerRef.current.decodeFromVideoElement(videoRef.current, (result, err) => {
-        if (result) {
-          const code = result.getText().trim();
-          setLastCode(code);
-          onDetected(code);
-          toast.success('Número leído', { description: code });
-          handleClose();
-        }
-      });
-      controlsRef.current = controls;
       setStarting(false);
     } catch {
       setStarting(false);
@@ -154,8 +134,69 @@ export function BarcodeScanner({ open, onOpenChange, onDetected }: BarcodeScanne
     }
   }
 
+  async function captureAndRead() {
+    if (!videoRef.current || !streamRef.current) return;
+
+    setProcessing(true);
+    setError(null);
+
+    try {
+      const video = videoRef.current;
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth || 1280;
+      canvas.height = video.videoHeight || 720;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('No se pudo crear el canvas');
+
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const dataUrl = canvas.toDataURL('image/png');
+
+      const worker = await createWorker('spa', 1, {
+        logger: () => {},
+        errorHandler: () => {},
+      });
+      await worker.setParameters({
+        tessedit_pageseg_mode: PSM.SINGLE_BLOCK,
+        tessedit_char_whitelist: '0123456789',
+      });
+      const {
+        data: { text },
+      } = await worker.recognize(dataUrl);
+      await worker.terminate();
+
+      const cleaned = extractSimNumber(text);
+      if (cleaned) {
+        setLastCode(cleaned);
+        onDetected(cleaned);
+        toast.success('Número leído', { description: cleaned });
+        stopCamera();
+        onOpenChange(false);
+      } else {
+        setError('No se detectó un número de SIM en la foto. Intenta enfocar mejor y que el número ocupe la mayor parte del recuadro.');
+      }
+    } catch (err) {
+      console.error(err);
+      setError('Error al procesar la imagen. Intenta de nuevo.');
+    } finally {
+      setProcessing(false);
+    }
+  }
+
+  function extractSimNumber(text: string): string | null {
+    const digitsOnly = text.replace(/\D/g, '');
+    if (digitsOnly.length >= 11) {
+      return digitsOnly;
+    }
+    const matches = text.match(/\d[\d\s\-]{10,}\d/g);
+    if (matches && matches.length > 0) {
+      const cleaned = matches[0].replace(/\D/g, '');
+      if (cleaned.length >= 11) return cleaned;
+    }
+    return null;
+  }
+
   function handleClose() {
-    stopScanner();
+    stopCamera();
     onOpenChange(false);
   }
 
@@ -173,7 +214,7 @@ export function BarcodeScanner({ open, onOpenChange, onDetected }: BarcodeScanne
             Escáner de SIM
           </DialogTitle>
           <DialogDescription>
-            Apunta la cámara al código de barras impreso en la tarjeta SIM. Mantén la tarjeta bien iluminada y dentro del recuadro.
+            Enfoca el número impreso en la tarjeta SIM dentro del recuadro y toma la foto.
           </DialogDescription>
         </DialogHeader>
 
@@ -196,7 +237,13 @@ export function BarcodeScanner({ open, onOpenChange, onDetected }: BarcodeScanne
               <p className="text-sm">Iniciando cámara…</p>
             </div>
           )}
-          {error && !starting && (
+          {processing && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/80 text-white">
+              <Loader2 className="h-10 w-10 animate-spin" />
+              <p className="text-sm">Leyendo número con OCR…</p>
+            </div>
+          )}
+          {error && !starting && !processing && (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/80 p-6 text-center text-white">
               <AlertTriangle className="h-10 w-10 text-warning-foreground" />
               <p className="text-sm">{error}</p>
@@ -239,6 +286,24 @@ export function BarcodeScanner({ open, onOpenChange, onDetected }: BarcodeScanne
               <span className="font-mono text-xs">{lastCode}</span>
             </div>
           )}
+
+          <Button
+            onClick={captureAndRead}
+            disabled={starting || processing || permissionState !== 'granted'}
+            className="w-full"
+          >
+            {processing ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Procesando…
+              </>
+            ) : (
+              <>
+                <Aperture className="mr-2 h-4 w-4" />
+                Tomar foto y leer número
+              </>
+            )}
+          </Button>
 
           <Button variant="outline" onClick={handleClose} className="w-full">
             <X className="mr-2 h-4 w-4" />

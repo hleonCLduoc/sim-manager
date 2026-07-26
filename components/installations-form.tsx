@@ -156,11 +156,54 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
     return currentSimByLocation.get(`${exactLocation.name}|${exactLocation.detail || ''}`);
   }, [exactLocation, currentSimByLocation]);
 
-  function handleScanDetected(code: string) {
+  async function handleScanDetected(code: string) {
     const cleaned = code.replace(/\s/g, '').trim();
     setSimNumber(cleaned);
     setExistingSim(undefined);
-    checkSim(cleaned);
+
+    // Primero intentamos encontrarla como disponible para instalación.
+    const { data: freeSim } = await supabase
+      .from('sims')
+      .select('*')
+      .eq('sim_number', cleaned)
+      .eq('status', 'libre')
+      .maybeSingle();
+
+    if (freeSim) {
+      const sim = freeSim as Sim;
+      setExistingSim(sim);
+      toast.success('SIM disponible encontrada', {
+        description: `${sim.sim_number}${sim.plan ? ` - ${sim.plan}` : ''}`,
+      });
+      return;
+    }
+
+    // Si no está libre, verificamos si existe en cualquier estado.
+    const { data: anySim } = await supabase
+      .from('sims')
+      .select('*')
+      .eq('sim_number', cleaned)
+      .maybeSingle();
+
+    if (anySim) {
+      const sim = anySim as Sim;
+      setExistingSim(sim);
+      if (sim.status === 'instalada') {
+        toast.info('SIM encontrada, pero ya está instalada', {
+          description: `Número ${sim.sim_number}`,
+        });
+      } else {
+        toast.success('SIM encontrada', {
+          description: `Número ${sim.sim_number}`,
+        });
+      }
+      return;
+    }
+
+    setExistingSim(null);
+    toast.warning('SIM no encontrada en el inventario', {
+      description: 'Se registrará como Pendiente de Revisión.',
+    });
   }
 
   function selectSimSuggestion(s: Sim) {
