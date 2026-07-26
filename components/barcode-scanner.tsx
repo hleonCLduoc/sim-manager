@@ -18,7 +18,9 @@ import {
 } from '@/components/ui/select';
 import { Camera, Loader2, X, ScanLine, CheckCircle2, RefreshCcw, AlertTriangle, Aperture } from 'lucide-react';
 import { toast } from 'sonner';
-import { createWorker, PSM } from 'tesseract.js';
+
+const SIM_MIN_LEN = 15;
+const SIM_MAX_LEN = 22;
 
 interface BarcodeScannerProps {
   open: boolean;
@@ -148,23 +150,45 @@ export function BarcodeScanner({ open, onOpenChange, onDetected }: BarcodeScanne
       const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error('No se pudo crear el canvas');
 
+      // OCR 1: imagen completa
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const dataUrl = canvas.toDataURL('image/png');
+      const fullFrameDataUrl = canvas.toDataURL('image/png');
 
-      const worker = await createWorker('spa', 1, {
+      // OCR 2: recorte central (similar al recuadro visible) para mejorar precisión.
+      const cropCanvas = document.createElement('canvas');
+      const cropW = Math.floor(canvas.width * 0.9);
+      const cropH = Math.floor(canvas.height * 0.35);
+      const cropX = Math.floor((canvas.width - cropW) / 2);
+      const cropY = Math.floor((canvas.height - cropH) / 2);
+      cropCanvas.width = cropW;
+      cropCanvas.height = cropH;
+      const cropCtx = cropCanvas.getContext('2d');
+      if (!cropCtx) throw new Error('No se pudo crear el recorte OCR');
+      cropCtx.drawImage(canvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+      const cropDataUrl = cropCanvas.toDataURL('image/png');
+
+      const tesseract = await import('tesseract.js');
+      const worker = await tesseract.createWorker('spa', 1, {
         logger: () => {},
         errorHandler: () => {},
       });
       await worker.setParameters({
-        tessedit_pageseg_mode: PSM.SINGLE_BLOCK,
+        tessedit_pageseg_mode: tesseract.PSM.SINGLE_BLOCK,
         tessedit_char_whitelist: '0123456789',
       });
-      const {
-        data: { text },
-      } = await worker.recognize(dataUrl);
+
+      const [fullResult, cropResult] = await Promise.all([
+        worker.recognize(fullFrameDataUrl),
+        worker.recognize(cropDataUrl),
+      ]);
+
       await worker.terminate();
 
-      const cleaned = extractSimNumber(text);
+      const cleaned = extractSimNumber(
+        fullResult.data.text || '',
+        cropResult.data.text || ''
+      );
+
       if (cleaned) {
         setLastCode(cleaned);
         onDetected(cleaned);
@@ -172,7 +196,7 @@ export function BarcodeScanner({ open, onOpenChange, onDetected }: BarcodeScanne
         stopCamera();
         onOpenChange(false);
       } else {
-        setError('No se detectó un número de SIM en la foto. Intenta enfocar mejor y que el número ocupe la mayor parte del recuadro.');
+        setError('No se detectó un número SIM válido. Intenta otra foto con más luz y mostrando completo el número dentro del recuadro.');
       }
     } catch (err) {
       console.error(err);
@@ -182,17 +206,50 @@ export function BarcodeScanner({ open, onOpenChange, onDetected }: BarcodeScanne
     }
   }
 
-  function extractSimNumber(text: string): string | null {
-    const digitsOnly = text.replace(/\D/g, '');
-    if (digitsOnly.length >= 11) {
-      return digitsOnly;
+  function normalizeCandidate(raw: string): string {
+    return raw.replace(/\D/g, '');
+  }
+
+  function scoreCandidate(value: string): number {
+    let score = 0;
+    if (value.startsWith('89')) score += 4;
+    if (value.length === 19) score += 3;
+    if (value.length === 20) score += 2;
+    if (value.length >= 18) score += 1;
+    return score;
+  }
+
+  function extractSimNumber(...texts: string[]): string | null {
+    const set = new Set<string>();
+
+    for (const text of texts) {
+      const digitsOnly = normalizeCandidate(text);
+      if (digitsOnly.length >= SIM_MIN_LEN) {
+        set.add(digitsOnly);
+      }
+
+      const matches = text.match(/\d[\d\s\-]{10,}\d/g);
+      if (!matches) continue;
+      for (const match of matches) {
+        set.add(normalizeCandidate(match));
+      }
     }
-    const matches = text.match(/\d[\d\s\-]{10,}\d/g);
-    if (matches && matches.length > 0) {
-      const cleaned = matches[0].replace(/\D/g, '');
-      if (cleaned.length >= 11) return cleaned;
+
+    const candidates = Array.from(set).filter(
+      (v) => v.length >= SIM_MIN_LEN && v.length <= SIM_MAX_LEN
+    );
+
+    if (candidates.length === 0) {
+      return null;
     }
-    return null;
+
+    candidates.sort((a, b) => {
+      const scoreDiff = scoreCandidate(b) - scoreCandidate(a);
+      if (scoreDiff !== 0) return scoreDiff;
+      return b.length - a.length;
+    });
+
+    return candidates[0] || null;
   }
 
   function handleClose() {
