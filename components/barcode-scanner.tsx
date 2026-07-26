@@ -19,7 +19,7 @@ import {
 import { Camera, Loader2, X, ScanLine, CheckCircle2, RefreshCcw, AlertTriangle, Aperture } from 'lucide-react';
 import { toast } from 'sonner';
 
-const SIM_MIN_LEN = 15;
+const SIM_MIN_LEN = 18;
 const SIM_MAX_LEN = 22;
 
 interface BarcodeScannerProps {
@@ -212,10 +212,11 @@ export function BarcodeScanner({ open, onOpenChange, onDetected }: BarcodeScanne
 
   function scoreCandidate(value: string): number {
     let score = 0;
-    if (value.startsWith('89')) score += 4;
-    if (value.length === 19) score += 3;
-    if (value.length === 20) score += 2;
-    if (value.length >= 18) score += 1;
+    if (value.startsWith('89')) score += 8;
+    if (value.length === 20) score += 5;
+    if (value.length === 19) score += 4;
+    if (value.length === 21) score += 3;
+    if (value.length === 22) score += 2;
     return score;
   }
 
@@ -243,13 +244,17 @@ export function BarcodeScanner({ open, onOpenChange, onDetected }: BarcodeScanne
       return null;
     }
 
-    candidates.sort((a, b) => {
+    // Si existen candidatos con prefijo ICCID estándar (89), descartamos el resto.
+    const startsWith89 = candidates.filter((v) => v.startsWith('89'));
+    const filtered = startsWith89.length > 0 ? startsWith89 : candidates;
+
+    filtered.sort((a, b) => {
       const scoreDiff = scoreCandidate(b) - scoreCandidate(a);
       if (scoreDiff !== 0) return scoreDiff;
       return b.length - a.length;
     });
 
-    return candidates[0] || null;
+    return filtered[0] || null;
   }
 
   function handleClose() {

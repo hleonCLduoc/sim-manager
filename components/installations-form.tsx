@@ -156,10 +156,22 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
     return currentSimByLocation.get(`${exactLocation.name}|${exactLocation.detail || ''}`);
   }, [exactLocation, currentSimByLocation]);
 
+  function isPlausibleIccid(value: string): boolean {
+    const digits = value.replace(/\D/g, '');
+    if (digits.length < 18 || digits.length > 22) return false;
+    return digits.startsWith('89');
+  }
+
   async function handleScanDetected(code: string) {
-    const cleaned = code.replace(/\s/g, '').trim();
-    setSimNumber(cleaned);
+    const cleaned = code.replace(/\D/g, '').trim();
     setExistingSim(undefined);
+
+    if (!isPlausibleIccid(cleaned)) {
+      toast.warning('Lectura OCR poco confiable', {
+        description: `Se detectó ${cleaned || 'vacío'}. Verifica y escribe el SIM manualmente.`,
+      });
+      return;
+    }
 
     // Primero intentamos encontrarla como disponible para instalación.
     const { data: freeSim } = await supabase
@@ -171,6 +183,7 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
 
     if (freeSim) {
       const sim = freeSim as Sim;
+      setSimNumber(sim.sim_number);
       setExistingSim(sim);
       toast.success('SIM disponible encontrada', {
         description: `${sim.sim_number}${sim.plan ? ` - ${sim.plan}` : ''}`,
@@ -187,6 +200,7 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
 
     if (anySim) {
       const sim = anySim as Sim;
+      setSimNumber(sim.sim_number);
       setExistingSim(sim);
       if (sim.status === 'instalada') {
         toast.info('SIM encontrada, pero ya está instalada', {
@@ -202,8 +216,11 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
 
     setExistingSim(null);
     toast.warning('SIM no encontrada en el inventario', {
-      description: 'Se registrará como Pendiente de Revisión.',
+      description: `Lectura detectada: ${cleaned}. Revisa el número antes de registrar.`,
     });
+
+    // No autocompletar si no existe: evita registrar por error una lectura OCR falsa.
+    setSimNumber('');
   }
 
   function selectSimSuggestion(s: Sim) {

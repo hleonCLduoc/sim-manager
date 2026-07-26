@@ -117,7 +117,7 @@ lines.push('-- 3. Insertar instalaciones actuales');
 lines.push('INSERT INTO installations (id, sim_id, sim_number, location_id, location_name, location_detail, imei, action, installed_at, notes) VALUES');
 const installationValues = installations.map((inst, i, arr) => {
   const comma = i < arr.length - 1 ? ',' : ';';
-  return `  ('${inst.id}', (SELECT id FROM sims WHERE sim_number = ${escapeSql(inst.sim_number)}), ${escapeSql(inst.sim_number)}, '${inst.location_id}', ${escapeSql(inst.location_name)}, ${escapeSql(inst.location_detail)}, ${escapeSql(inst.imei)}, ${escapeSql(inst.action)}, ${escapeSql(inst.installed_at)}, ${escapeSql(inst.notes)})${comma}`;
+  return `  ('${inst.id}', (SELECT id FROM sims WHERE sim_number = ${escapeSql(inst.sim_number)}), ${escapeSql(inst.sim_number)}, (SELECT id FROM locations WHERE name = ${escapeSql(inst.location_name)} AND detail IS NOT DISTINCT FROM ${escapeSql(inst.location_detail)} LIMIT 1), ${escapeSql(inst.location_name)}, ${escapeSql(inst.location_detail)}, ${escapeSql(inst.imei)}, ${escapeSql(inst.action)}, ${escapeSql(inst.installed_at)}, ${escapeSql(inst.notes)})${comma}`;
 });
 lines.push(...installationValues);
 lines.push('');
