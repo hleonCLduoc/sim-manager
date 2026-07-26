@@ -12,14 +12,12 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import { Cpu, Loader2, LogIn, UserPlus } from 'lucide-react';
+import { Cpu, Loader2, LogIn } from 'lucide-react';
 
 export function AuthScreen() {
-  const { signIn, signUp } = useAuth();
-  const [mode, setMode] = useState<'login' | 'signup'>('login');
+  const { signIn } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [displayName, setDisplayName] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -28,21 +26,8 @@ export function AuthScreen() {
     setError(null);
     setLoading(true);
     try {
-      if (mode === 'login') {
-        const { error: err } = await signIn(email.trim(), password);
-        if (err) setError(err);
-      } else {
-        const { error: err } = await signUp(email.trim(), password, displayName.trim() || undefined);
-        if (err) {
-          setError(err);
-        } else {
-          setError(null);
-          setMode('login');
-          setEmail('');
-          setPassword('');
-          setDisplayName('');
-        }
-      }
+      const { error: err } = await signIn(email.trim(), password);
+      if (err) setError(err);
     } finally {
       setLoading(false);
     }
@@ -63,28 +48,13 @@ export function AuthScreen() {
 
         <Card className="border-border/60 shadow-md">
           <CardHeader>
-            <CardTitle className="text-lg">
-              {mode === 'login' ? 'Iniciar sesión' : 'Crear cuenta'}
-            </CardTitle>
+            <CardTitle className="text-lg">Iniciar sesión</CardTitle>
             <CardDescription>
-              {mode === 'login'
-                ? 'Ingresa tus credenciales para acceder al sistema.'
-                : 'El primer usuario registrado se convierte en super administrador.'}
+              Sistema cerrado. Si no tienes acceso, contacta al administrador.
             </CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-4">
-              {mode === 'signup' && (
-                <div className="space-y-2">
-                  <Label htmlFor="name">Nombre</Label>
-                  <Input
-                    id="name"
-                    value={displayName}
-                    onChange={(e) => setDisplayName(e.target.value)}
-                    placeholder="Tu nombre"
-                  />
-                </div>
-              )}
               <div className="space-y-2">
                 <Label htmlFor="email">Correo electrónico</Label>
                 <Input
@@ -121,39 +91,14 @@ export function AuthScreen() {
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                     Procesando…
                   </>
-                ) : mode === 'login' ? (
+                ) : (
                   <>
                     <LogIn className="mr-2 h-4 w-4" />
                     Entrar
                   </>
-                ) : (
-                  <>
-                    <UserPlus className="mr-2 h-4 w-4" />
-                    Registrarme
-                  </>
                 )}
               </Button>
             </form>
-
-            <div className="mt-4 text-center text-sm">
-              {mode === 'login' ? (
-                <button
-                  type="button"
-                  onClick={() => { setMode('signup'); setError(null); }}
-                  className="text-primary hover:underline"
-                >
-                  ¿No tienes cuenta? Regístrate
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => { setMode('login'); setError(null); }}
-                  className="text-primary hover:underline"
-                >
-                  ¿Ya tienes cuenta? Inicia sesión
-                </button>
-              )}
-            </div>
           </CardContent>
         </Card>
       </div>
