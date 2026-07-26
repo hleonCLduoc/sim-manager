@@ -20,6 +20,10 @@ import { Camera, Loader2, X, ScanLine, CheckCircle2, RefreshCcw, AlertTriangle }
 import { BrowserMultiFormatReader, IScannerControls } from '@zxing/browser';
 import { toast } from 'sonner';
 
+function createReader() {
+  return new BrowserMultiFormatReader();
+}
+
 interface BarcodeScannerProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -45,7 +49,7 @@ export function BarcodeScanner({ open, onOpenChange, onDetected }: BarcodeScanne
 
     setError(null);
     setLastCode(null);
-    const reader = new BrowserMultiFormatReader();
+    const reader = createReader();
     readerRef.current = reader;
 
     if (!isSecureContext) {
@@ -121,9 +125,15 @@ export function BarcodeScanner({ open, onOpenChange, onDetected }: BarcodeScanne
     stopScanner();
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { deviceId: { exact: deviceId } },
-      });
+      const constraints: MediaStreamConstraints = {
+        video: {
+          deviceId: { exact: deviceId },
+          facingMode: 'environment',
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+        },
+      };
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
       videoRef.current.srcObject = stream;
       await videoRef.current.play();
 
@@ -163,20 +173,20 @@ export function BarcodeScanner({ open, onOpenChange, onDetected }: BarcodeScanne
             Escáner de SIM
           </DialogTitle>
           <DialogDescription>
-            Apunta la cámara al código de barras impreso en la tarjeta SIM.
+            Apunta la cámara al código de barras impreso en la tarjeta SIM. Mantén la tarjeta bien iluminada y dentro del recuadro.
           </DialogDescription>
         </DialogHeader>
 
         <div className="relative bg-black">
           <video
             ref={videoRef}
-            className="h-[320px] w-full object-cover"
+            className="h-[360px] w-full object-cover"
             muted
             playsInline
             autoPlay
           />
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-            <div className="relative h-40 w-[85%] max-w-xs rounded-xl border-2 border-white/70 shadow-[0_0_0_1000px_rgba(0,0,0,0.35)]">
+            <div className="relative h-32 w-[90%] max-w-xs rounded-xl border-2 border-white/70 shadow-[0_0_0_1000px_rgba(0,0,0,0.35)]">
               <ScanLine className="absolute left-1/2 top-1/2 h-10 w-10 -translate-x-1/2 -translate-y-1/2 text-primary drop-shadow-lg" />
             </div>
           </div>
