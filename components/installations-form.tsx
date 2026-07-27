@@ -59,6 +59,7 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
   const [allSims, setAllSims] = useState<Sim[]>([]);
   const [replaceDialogOpen, setReplaceDialogOpen] = useState(false);
   const [pendingReplace, setPendingReplace] = useState<LocationSuggestion | null>(null);
+  const [createLocationConfirmOpen, setCreateLocationConfirmOpen] = useState(false);
   const [scanConfirmOpen, setScanConfirmOpen] = useState(false);
   const [pendingScannedSim, setPendingScannedSim] = useState('');
 
@@ -363,12 +364,22 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
       return;
     }
 
+    if (action === 'instalar' && locationName.trim() && !exactLocation) {
+      setCreateLocationConfirmOpen(true);
+      return;
+    }
+
     await doSubmit(false);
   }
 
   function confirmReplace() {
     setReplaceDialogOpen(false);
     doSubmit(true);
+  }
+
+  function confirmCreateLocation() {
+    setCreateLocationConfirmOpen(false);
+    doSubmit(false);
   }
 
   function selectSuggestion(s: LocationSuggestion) {
@@ -555,6 +566,12 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
                     instalada. Se preguntará si deseas reemplazarla.
                   </p>
                 )}
+                {action === 'instalar' && locationName.trim() && !exactLocation && !showSuggestions && (
+                  <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <Info className="h-3.5 w-3.5" />
+                    La ubicación no existe en el catálogo actual. Al continuar se te preguntará si deseas crearla.
+                  </p>
+                )}
               </div>
 
               <div className="space-y-2">
@@ -693,6 +710,40 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
                 Usar y buscar
               </Button>
             </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={createLocationConfirmOpen} onOpenChange={setCreateLocationConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Crear nueva ubicación</DialogTitle>
+            <DialogDescription>
+              Esta ubicación no existe en el catálogo. Confirma si deseas crearla antes de registrar la instalación.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 rounded-lg bg-muted p-4 text-sm">
+            <div className="flex justify-between gap-3">
+              <span className="text-muted-foreground">Ubicación:</span>
+              <span className="font-medium">{locationName.trim()}</span>
+            </div>
+            <div className="flex justify-between gap-3">
+              <span className="text-muted-foreground">Detalle / Línea:</span>
+              <span className="text-right">{locationDetail.trim() || 'Sin detalle'}</span>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateLocationConfirmOpen(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={confirmCreateLocation} disabled={loading}>
+              {loading ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <MapPin className="mr-2 h-4 w-4" />
+              )}
+              Sí, crear y continuar
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

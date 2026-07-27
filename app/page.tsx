@@ -12,7 +12,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Scorecards } from '@/components/scorecards';
-import { MasterSearch } from '@/components/master-search';
 import { LocationsPanel } from '@/components/locations-panel';
 import { InstallationsForm } from '@/components/installations-form';
 import { InstallationsHistory } from '@/components/installations-history';
@@ -192,12 +191,6 @@ function App({
                 sims={sims}
                 loading={loading}
               />
-            </section>
-            <section className="space-y-3">
-              <h2 className="text-sm font-semibold text-muted-foreground">
-                Buscador maestro
-              </h2>
-              <MasterSearch />
             </section>
           </TabsContent>
 

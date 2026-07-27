@@ -195,6 +195,7 @@ function CreateUserDialog({
   onOpenChange: (open: boolean) => void;
   onCreated: () => void;
 }) {
+  const [createMode, setCreateMode] = useState<'password' | 'invite'>('password');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -204,17 +205,35 @@ function CreateUserDialog({
   const [canManageUsers, setCanManageUsers] = useState(false);
   const [loading, setLoading] = useState(false);
 
+  function generateTemporaryPassword(length = 12) {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%';
+    const bytes = new Uint32Array(length);
+    window.crypto.getRandomValues(bytes);
+    return Array.from(bytes, (n) => chars[n % chars.length]).join('');
+  }
+
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
-    if (!email.trim() || !password.trim()) {
-      toast.error('Completa correo y contraseña');
+    if (!email.trim()) {
+      toast.error('Completa el correo');
       return;
     }
+    let passwordToUse = password;
+    if (createMode === 'password') {
+      if (!password.trim() || password.trim().length < 6) {
+        toast.error('La contraseña debe tener al menos 6 caracteres');
+        return;
+      }
+      passwordToUse = password.trim();
+    } else {
+      passwordToUse = generateTemporaryPassword();
+    }
+
     setLoading(true);
     try {
       const { data, error } = await supabase.rpc('create_user', {
         p_email: email.trim(),
-        p_password: password,
+        p_password: passwordToUse,
         p_display_name: displayName.trim() || null,
         p_role: role,
         p_can_batch_import: canBatchImport,
@@ -227,7 +246,24 @@ function CreateUserDialog({
         toast.error(result?.error || 'No se pudo crear el usuario');
         return;
       }
-      toast.success('Usuario creado correctamente');
+
+      if (createMode === 'invite') {
+        const redirectTo = typeof window !== 'undefined' ? window.location.origin : undefined;
+        const { error: inviteError } = await supabase.auth.resetPasswordForEmail(
+          email.trim(),
+          redirectTo ? { redirectTo } : undefined
+        );
+
+        if (inviteError) {
+          toast.success(`Usuario creado. No se pudo enviar link; contraseña temporal: ${passwordToUse}`);
+        } else {
+          toast.success('Usuario creado y link de configuración enviado');
+        }
+      } else {
+        toast.success('Usuario creado correctamente');
+      }
+
+      setCreateMode('password');
       setEmail('');
       setPassword('');
       setDisplayName('');
@@ -251,10 +287,23 @@ function CreateUserDialog({
         <DialogHeader>
           <DialogTitle>Crear nuevo usuario</DialogTitle>
           <DialogDescription>
-            Define el correo, contraseña y permisos del nuevo usuario.
+            Define correo, rol, permisos y cómo configurará su contraseña.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleCreate} className="space-y-4">
+          <div className="space-y-2">
+            <Label>Método de acceso</Label>
+            <Select value={createMode} onValueChange={(v) => setCreateMode(v as 'password' | 'invite')}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="password">Definir contraseña manual</SelectItem>
+                <SelectItem value="invite">Enviar link para configurar contraseña</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="new-name">Nombre</Label>
@@ -277,18 +326,26 @@ function CreateUserDialog({
               />
             </div>
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="new-password">Contraseña *</Label>
-            <Input
-              id="new-password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Mínimo 6 caracteres"
-              required
-              minLength={6}
-            />
-          </div>
+
+          {createMode === 'password' ? (
+            <div className="space-y-2">
+              <Label htmlFor="new-password">Contraseña *</Label>
+              <Input
+                id="new-password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Mínimo 6 caracteres"
+                required
+                minLength={6}
+              />
+            </div>
+          ) : (
+            <p className="rounded-lg border border-dashed px-3 py-2 text-sm text-muted-foreground">
+              Se creará con contraseña temporal y se enviará un correo para que el usuario configure su contraseña.
+            </p>
+          )}
+
           <div className="space-y-2">
             <Label>Rol</Label>
             <Select value={role} onValueChange={(v) => setRole(v as UserRole)}>
@@ -332,7 +389,7 @@ function CreateUserDialog({
             </Button>
             <Button type="submit" disabled={loading}>
               {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <UserPlus className="mr-2 h-4 w-4" />}
-              Crear usuario
+              {createMode === 'invite' ? 'Crear y enviar link' : 'Crear usuario'}
             </Button>
           </DialogFooter>
         </form>

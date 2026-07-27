@@ -68,11 +68,18 @@ export function LocationsPanel({ locations, installations, sims, loading }: Loca
     const term = search.trim().toLowerCase();
     if (!term) return locations;
     return locations.filter(
-      (l) =>
-        l.name.toLowerCase().includes(term) ||
-        (l.detail || '').toLowerCase().includes(term)
+      (l) => {
+        const current = currentInstallationsByLocation.byId.get(l.id)
+          || currentInstallationsByLocation.byNameDetail.get(buildLocationKey(l.name, l.detail));
+
+        return (
+          l.name.toLowerCase().includes(term) ||
+          (l.detail || '').toLowerCase().includes(term) ||
+          current?.sim_number.toLowerCase().includes(term)
+        );
+      }
     );
-  }, [locations, search]);
+  }, [locations, search, currentInstallationsByLocation]);
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const currentPage = Math.min(page, pageCount - 1);
@@ -109,7 +116,7 @@ export function LocationsPanel({ locations, installations, sims, loading }: Loca
               setSearch(e.target.value);
               setPage(0);
             }}
-            placeholder="Buscar por bus, sucursal o detalle…"
+            placeholder="Buscar por bus, sucursal, detalle o número SIM…"
             className="pl-9"
           />
         </div>
