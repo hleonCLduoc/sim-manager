@@ -40,7 +40,13 @@ interface LocationSuggestion {
   currentSim?: Installation;
 }
 
+interface PendingTransfer {
+  sim: Sim;
+  currentInstallation: Installation;
+}
+
 const ACTIVE_PLAN_RETIRE_NOTE_TAG = 'RECLAMO_PLAN_ACTIVO';
+const SIM_TRANSFER_NOTE_TAG = 'TRASLADO_AUTOMATICO_SIM';
 
 export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
   const [simNumber, setSimNumber] = useState('');
@@ -62,6 +68,8 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
   const [replaceDialogOpen, setReplaceDialogOpen] = useState(false);
   const [pendingReplace, setPendingReplace] = useState<LocationSuggestion | null>(null);
   const [createLocationConfirmOpen, setCreateLocationConfirmOpen] = useState(false);
+  const [transferConfirmOpen, setTransferConfirmOpen] = useState(false);
+  const [pendingTransfer, setPendingTransfer] = useState<PendingTransfer | null>(null);
   const [retireActivePlanConfirmOpen, setRetireActivePlanConfirmOpen] = useState(false);
   const [pendingRetireSim, setPendingRetireSim] = useState<Sim | null>(null);
   const [scanConfirmOpen, setScanConfirmOpen] = useState(false);
@@ -293,7 +301,22 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
     setNotes('');
     setExistingSim(undefined);
     setPendingReplace(null);
+    setPendingTransfer(null);
     setPendingRetireSim(null);
+  }
+
+  function normalizeText(value: string | null | undefined): string {
+    return (value || '').trim().toLowerCase();
+  }
+
+  function isSameLocation(
+    aName: string | null | undefined,
+    aDetail: string | null | undefined,
+    bName: string | null | undefined,
+    bDetail: string | null | undefined
+  ): boolean {
+    return normalizeText(aName) === normalizeText(bName)
+      && normalizeText(aDetail) === normalizeText(bDetail);
   }
 
   function buildNotesWithAuditTag(baseNotes: string, auditTag: string | null) {
@@ -319,6 +342,44 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
     return (data as Sim | null) ?? null;
   }
 
+  async function findCurrentInstallationForSim(sim: string): Promise<Installation | null> {
+    const trimmed = sim.trim();
+    if (!trimmed) return null;
+
+    const { data } = await supabase
+      .from('installations')
+      .select('*')
+      .eq('sim_number', trimmed)
+      .order('installed_at', { ascending: false })
+      .limit(1);
+
+    const latest = ((data as Installation[] | null) ?? [])[0];
+    if (!latest || latest.action !== 'instalar') return null;
+    return latest;
+  }
+
+  async function runRegisterInstallation(payload: {
+    p_sim_number: string;
+    p_location_name: string | null;
+    p_location_detail: string | null;
+    p_imei: string | null;
+    p_action: 'instalar' | 'retirar';
+    p_notes: string | null;
+    p_replace_existing?: boolean;
+  }) {
+    let { data, error } = await supabase.rpc('register_installation', payload);
+
+    // Compatibilidad temporal: algunas bases aun no tienen p_replace_existing.
+    if (error?.code === 'PGRST202' && Object.prototype.hasOwnProperty.call(payload, 'p_replace_existing')) {
+      const { p_replace_existing: _ignored, ...legacyPayload } = payload;
+      const legacy = await supabase.rpc('register_installation', legacyPayload);
+      data = legacy.data;
+      error = legacy.error;
+    }
+
+    return { data, error };
+  }
+
   async function doSubmit(replaceExisting = false, auditTag: string | null = null) {
     const trimmedSim = simNumber.trim();
     if (!trimmedSim) {
@@ -332,7 +393,7 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
 
     setLoading(true);
     try {
-      let { data, error } = await supabase.rpc('register_installation', {
+      const { data, error } = await runRegisterInstallation({
         p_sim_number: trimmedSim,
         p_location_name: locationName.trim() || null,
         p_location_detail: locationDetail.trim() || null,
@@ -341,20 +402,6 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
         p_notes: buildNotesWithAuditTag(notes, auditTag),
         p_replace_existing: replaceExisting,
       });
-
-      // Compatibilidad temporal: algunas bases aun no tienen p_replace_existing.
-      if (error?.code === 'PGRST202') {
-        const legacy = await supabase.rpc('register_installation', {
-          p_sim_number: trimmedSim,
-          p_location_name: locationName.trim() || null,
-          p_location_detail: locationDetail.trim() || null,
-          p_imei: imei.trim() || null,
-          p_action: action,
-          p_notes: buildNotesWithAuditTag(notes, auditTag),
-        });
-        data = legacy.data;
-        error = legacy.error;
-      }
 
       if (error) throw error;
 
@@ -415,7 +462,34 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
       return;
     }
 
-    if (action === 'instalar' && currentSimAtExactLocation) {
+    if (action === 'instalar') {
+      const trimmedSim = simNumber.trim();
+      if (trimmedSim && locationName.trim()) {
+        const sim = await findSimByExactNumber(trimmedSim);
+        if (sim?.status === 'instalada') {
+          const currentInstallation = await findCurrentInstallationForSim(trimmedSim);
+          if (
+            currentInstallation
+            && !isSameLocation(
+              currentInstallation.location_name,
+              currentInstallation.location_detail,
+              locationName,
+              locationDetail
+            )
+          ) {
+            setPendingTransfer({ sim, currentInstallation });
+            setTransferConfirmOpen(true);
+            return;
+          }
+        }
+      }
+    }
+
+    if (
+      action === 'instalar'
+      && currentSimAtExactLocation
+      && currentSimAtExactLocation.sim_number !== simNumber.trim()
+    ) {
       const loc = exactLocation!;
       setPendingReplace({
         location: loc,
@@ -446,6 +520,48 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
   function confirmRetireActivePlan() {
     setRetireActivePlanConfirmOpen(false);
     doSubmit(false, ACTIVE_PLAN_RETIRE_NOTE_TAG);
+  }
+
+  async function confirmTransferSim() {
+    if (!pendingTransfer) return;
+
+    setTransferConfirmOpen(false);
+    setLoading(true);
+
+    try {
+      const targetName = locationName.trim() || 'sin ubicacion';
+      const targetDetail = locationDetail.trim() || 'sin detalle';
+      const transferNote = `${SIM_TRANSFER_NOTE_TAG}: retiro automatico por traslado a ${targetName} (${targetDetail})`;
+
+      const { data, error } = await runRegisterInstallation({
+        p_sim_number: pendingTransfer.sim.sim_number,
+        p_location_name: pendingTransfer.currentInstallation.location_name || null,
+        p_location_detail: pendingTransfer.currentInstallation.location_detail || null,
+        p_imei: pendingTransfer.currentInstallation.imei || null,
+        p_action: 'retirar',
+        p_notes: transferNote,
+      });
+
+      if (error) throw error;
+
+      const result = data as RegisterInstallationResult;
+      if (!result?.success) {
+        toast.error(result?.error || 'No se pudo retirar la SIM de su ubicación actual');
+        return;
+      }
+
+      toast.info('SIM retirada de su ubicación actual', {
+        description: `${pendingTransfer.currentInstallation.location_name || 'Sin ubicación'}${pendingTransfer.currentInstallation.location_detail ? ` (${pendingTransfer.currentInstallation.location_detail})` : ''}`,
+      });
+    } catch (err) {
+      toast.error('No se pudo preparar el traslado de la SIM');
+      console.error(err);
+      setLoading(false);
+      return;
+    }
+
+    setLoading(false);
+    await doSubmit(false);
   }
 
   function selectSuggestion(s: LocationSuggestion) {
@@ -569,6 +685,12 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
                   <p className="flex items-center gap-1.5 text-xs text-warning-foreground">
                     <AlertTriangle className="h-3.5 w-3.5" />
                     SIM no encontrada en el maestro — se registrará como Pendiente de Revisión.
+                  </p>
+                )}
+                {action === 'instalar' && existingSim?.status === 'instalada' && (
+                  <p className="flex items-center gap-1.5 text-xs text-warning-foreground">
+                    <Info className="h-3.5 w-3.5" />
+                    Esta SIM ya aparece instalada. Antes de instalarla aquí, se mostrará su ubicación actual para confirmar traslado.
                   </p>
                 )}
                 {action === 'retirar' && existingSim?.plan && !existingSim.needs_review && (
@@ -815,6 +937,46 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
                 <MapPin className="mr-2 h-4 w-4" />
               )}
               Sí, crear y continuar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={transferConfirmOpen} onOpenChange={setTransferConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>SIM ya instalada en otra ubicación</DialogTitle>
+            <DialogDescription>
+              Esta SIM ya está activa en otra ubicación. Si continúas, se retirará de su ubicación actual y se instalará en la nueva.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 rounded-lg bg-muted p-4 text-sm">
+            <div className="flex justify-between gap-3">
+              <span className="text-muted-foreground">SIM:</span>
+              <span className="font-mono font-medium">{pendingTransfer?.sim.sim_number || simNumber.trim()}</span>
+            </div>
+            <div className="flex justify-between gap-3">
+              <span className="text-muted-foreground">Ubicación actual:</span>
+              <span className="text-right">
+                {pendingTransfer?.currentInstallation.location_name || 'Sin ubicación'}
+                {pendingTransfer?.currentInstallation.location_detail ? ` (${pendingTransfer.currentInstallation.location_detail})` : ''}
+              </span>
+            </div>
+            <div className="flex justify-between gap-3">
+              <span className="text-muted-foreground">Nueva ubicación:</span>
+              <span className="text-right font-medium">
+                {locationName.trim() || 'Sin ubicación'}
+                {locationDetail.trim() ? ` (${locationDetail.trim()})` : ''}
+              </span>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTransferConfirmOpen(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={confirmTransferSim} disabled={loading}>
+              {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ArrowDownToLine className="mr-2 h-4 w-4" />}
+              Sí, mover SIM a esta ubicación
             </Button>
           </DialogFooter>
         </DialogContent>
