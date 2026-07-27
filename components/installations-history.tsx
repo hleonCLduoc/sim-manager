@@ -9,9 +9,11 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowDownToLine, ArrowUpFromLine, History } from 'lucide-react';
+import { ArrowDownToLine, ArrowUpFromLine, History, AlertTriangle } from 'lucide-react';
 import type { Installation } from '@/lib/types';
 import { formatDateCL } from '@/lib/format';
+
+const ACTIVE_PLAN_RETIRE_NOTE_TAG = 'RECLAMO_PLAN_ACTIVO';
 
 interface InstallationsHistoryProps {
   items: Installation[];
@@ -80,6 +82,12 @@ export function InstallationsHistory({ items, loading }: InstallationsHistoryPro
                         <span className="text-muted-foreground">
                           {' · '}
                           {it.location_detail}
+                        </span>
+                      )}
+                      {it.action === 'retirar' && it.notes?.includes(ACTIVE_PLAN_RETIRE_NOTE_TAG) && (
+                        <span className="ml-2 inline-flex items-center gap-1 rounded bg-warning/10 px-1.5 py-0.5 text-[11px] text-warning-foreground">
+                          <AlertTriangle className="h-3 w-3" />
+                          Reclamo
                         </span>
                       )}
                     </TableCell>

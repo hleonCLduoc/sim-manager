@@ -38,7 +38,8 @@ interface ReportsProps {
   loading: boolean;
 }
 
-type ReportType = 'full' | 'installed' | 'free' | 'history';
+type ReportType = 'full' | 'installed' | 'free' | 'history' | 'claim-retire';
+const ACTIVE_PLAN_RETIRE_NOTE_TAG = 'RECLAMO_PLAN_ACTIVO';
 
 export function Reports({ sims, loading }: ReportsProps) {
   const [exporting, setExporting] = useState<ReportType | null>(null);
@@ -161,6 +162,50 @@ export function Reports({ sims, loading }: ReportsProps) {
     }
   }
 
+  async function exportActivePlanRetireClaims() {
+    setExporting('claim-retire');
+    try {
+      const { data, error } = await supabase
+        .from('installations')
+        .select('*')
+        .eq('action', 'retirar')
+        .ilike('notes', `%${ACTIVE_PLAN_RETIRE_NOTE_TAG}%`)
+        .order('installed_at', { ascending: false });
+
+      if (error) throw error;
+
+      const items = (data as Installation[]) ?? [];
+      if (items.length === 0) {
+        toast.error('No hay retiros marcados para reclamo');
+        return;
+      }
+
+      const headers = [
+        'Fecha',
+        'Numero SIM',
+        'Ubicacion',
+        'Detalle',
+        'IMEI',
+        'Notas',
+      ];
+      const rows = items.map((it) => [
+        formatDateCL(it.installed_at),
+        it.sim_number,
+        it.location_name || '',
+        it.location_detail || '',
+        it.imei || '',
+        it.notes || '',
+      ]);
+
+      downloadExcel(`retiros_plan_activo_reclamo_${dateStamp()}.xlsx`, rows, headers);
+      toast.success('Informe de retiros con plan activo descargado');
+    } catch {
+      toast.error('Error al descargar informe de reclamos');
+    } finally {
+      setExporting(null);
+    }
+  }
+
   function dateStamp(): string {
     return new Date().toISOString().slice(0, 10);
   }
@@ -238,6 +283,12 @@ export function Reports({ sims, loading }: ReportsProps) {
           description="Todos los registros de instalación y retiro"
           loading={exporting === 'history'}
           onExport={exportHistory}
+        />
+        <ExportCard
+          title="Retiros con plan activo"
+          description="Desinstalaciones marcadas para reclamo al proveedor"
+          loading={exporting === 'claim-retire'}
+          onExport={exportActivePlanRetireClaims}
         />
       </div>
 

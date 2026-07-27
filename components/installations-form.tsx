@@ -40,6 +40,8 @@ interface LocationSuggestion {
   currentSim?: Installation;
 }
 
+const ACTIVE_PLAN_RETIRE_NOTE_TAG = 'RECLAMO_PLAN_ACTIVO';
+
 export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
   const [simNumber, setSimNumber] = useState('');
   const [locationName, setLocationName] = useState('');
@@ -60,6 +62,8 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
   const [replaceDialogOpen, setReplaceDialogOpen] = useState(false);
   const [pendingReplace, setPendingReplace] = useState<LocationSuggestion | null>(null);
   const [createLocationConfirmOpen, setCreateLocationConfirmOpen] = useState(false);
+  const [retireActivePlanConfirmOpen, setRetireActivePlanConfirmOpen] = useState(false);
+  const [pendingRetireSim, setPendingRetireSim] = useState<Sim | null>(null);
   const [scanConfirmOpen, setScanConfirmOpen] = useState(false);
   const [pendingScannedSim, setPendingScannedSim] = useState('');
 
@@ -289,9 +293,33 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
     setNotes('');
     setExistingSim(undefined);
     setPendingReplace(null);
+    setPendingRetireSim(null);
   }
 
-  async function doSubmit(replaceExisting = false) {
+  function buildNotesWithAuditTag(baseNotes: string, auditTag: string | null) {
+    if (!auditTag) return baseNotes || null;
+    const cleanedBase = baseNotes.trim();
+    if (!cleanedBase) return auditTag;
+    return `${cleanedBase} | ${auditTag}`;
+  }
+
+  async function findSimByExactNumber(value: string): Promise<Sim | null> {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+
+    const cached = allSims.find((s) => s.sim_number === trimmed);
+    if (cached) return cached;
+
+    const { data } = await supabase
+      .from('sims')
+      .select('*')
+      .eq('sim_number', trimmed)
+      .maybeSingle();
+
+    return (data as Sim | null) ?? null;
+  }
+
+  async function doSubmit(replaceExisting = false, auditTag: string | null = null) {
     const trimmedSim = simNumber.trim();
     if (!trimmedSim) {
       toast.error('Ingresa el número de SIM');
@@ -310,7 +338,7 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
         p_location_detail: locationDetail.trim() || null,
         p_imei: imei.trim() || null,
         p_action: action,
-        p_notes: notes.trim() || null,
+        p_notes: buildNotesWithAuditTag(notes, auditTag),
         p_replace_existing: replaceExisting,
       });
 
@@ -322,7 +350,7 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
           p_location_detail: locationDetail.trim() || null,
           p_imei: imei.trim() || null,
           p_action: action,
-          p_notes: notes.trim() || null,
+          p_notes: buildNotesWithAuditTag(notes, auditTag),
         });
         data = legacy.data;
         error = legacy.error;
@@ -355,6 +383,12 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
         );
       }
 
+      if (action === 'retirar' && auditTag === ACTIVE_PLAN_RETIRE_NOTE_TAG) {
+        toast.warning('Retiro de SIM con plan activo registrado para reclamo', {
+          description: 'Este movimiento quedo marcado en historial e informes.',
+        });
+      }
+
       resetForm();
       onRegistered();
     } catch (err) {
@@ -367,6 +401,19 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+
+    if (action === 'retirar') {
+      const sim = await findSimByExactNumber(simNumber);
+      const hasActivePlanFromMaster = !!sim?.plan && !sim.needs_review;
+      if (hasActivePlanFromMaster) {
+        setPendingRetireSim(sim);
+        setRetireActivePlanConfirmOpen(true);
+        return;
+      }
+
+      await doSubmit(false);
+      return;
+    }
 
     if (action === 'instalar' && currentSimAtExactLocation) {
       const loc = exactLocation!;
@@ -394,6 +441,11 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
   function confirmCreateLocation() {
     setCreateLocationConfirmOpen(false);
     doSubmit(false);
+  }
+
+  function confirmRetireActivePlan() {
+    setRetireActivePlanConfirmOpen(false);
+    doSubmit(false, ACTIVE_PLAN_RETIRE_NOTE_TAG);
   }
 
   function selectSuggestion(s: LocationSuggestion) {
@@ -517,6 +569,12 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
                   <p className="flex items-center gap-1.5 text-xs text-warning-foreground">
                     <AlertTriangle className="h-3.5 w-3.5" />
                     SIM no encontrada en el maestro — se registrará como Pendiente de Revisión.
+                  </p>
+                )}
+                {action === 'retirar' && existingSim?.plan && !existingSim.needs_review && (
+                  <p className="flex items-center gap-1.5 text-xs text-warning-foreground">
+                    <AlertTriangle className="h-3.5 w-3.5" />
+                    Esta SIM tiene plan activo en la lista madre. Al retirarla se marcará para reclamo.
                   </p>
                 )}
               </div>
@@ -757,6 +815,39 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
                 <MapPin className="mr-2 h-4 w-4" />
               )}
               Sí, crear y continuar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={retireActivePlanConfirmOpen} onOpenChange={setRetireActivePlanConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Retiro de SIM con plan activo</DialogTitle>
+            <DialogDescription>
+              Esta SIM aparece en la lista madre contratada (columna G con plan activo).
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 rounded-lg bg-muted p-4 text-sm">
+            <div className="flex justify-between gap-3">
+              <span className="text-muted-foreground">SIM:</span>
+              <span className="font-mono font-medium">{pendingRetireSim?.sim_number || simNumber.trim()}</span>
+            </div>
+            <div className="flex justify-between gap-3">
+              <span className="text-muted-foreground">Plan:</span>
+              <span className="text-right font-medium">{pendingRetireSim?.plan || 'Con plan activo'}</span>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Si continúas, el retiro quedará registrado con marca de reclamo para informes.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRetireActivePlanConfirmOpen(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={confirmRetireActivePlan} disabled={loading}>
+              {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <AlertTriangle className="mr-2 h-4 w-4" />}
+              Sí, retirar y marcar reclamo
             </Button>
           </DialogFooter>
         </DialogContent>
