@@ -304,7 +304,7 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
 
     setLoading(true);
     try {
-      const { data, error } = await supabase.rpc('register_installation', {
+      let { data, error } = await supabase.rpc('register_installation', {
         p_sim_number: trimmedSim,
         p_location_name: locationName.trim() || null,
         p_location_detail: locationDetail.trim() || null,
@@ -313,6 +313,20 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
         p_notes: notes.trim() || null,
         p_replace_existing: replaceExisting,
       });
+
+      // Compatibilidad temporal: algunas bases aun no tienen p_replace_existing.
+      if (error?.code === 'PGRST202') {
+        const legacy = await supabase.rpc('register_installation', {
+          p_sim_number: trimmedSim,
+          p_location_name: locationName.trim() || null,
+          p_location_detail: locationDetail.trim() || null,
+          p_imei: imei.trim() || null,
+          p_action: action,
+          p_notes: notes.trim() || null,
+        });
+        data = legacy.data;
+        error = legacy.error;
+      }
 
       if (error) throw error;
 
