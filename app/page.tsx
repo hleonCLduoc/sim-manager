@@ -172,10 +172,22 @@ function App({
 
           {/* INSTALACIONES — pantalla principal */}
           <TabsContent value="instalaciones" className="space-y-6 outline-none">
-            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+            <section className="rounded-2xl border border-border/70 bg-card/60 p-4 shadow-sm sm:p-6">
+              <div className="mb-5 flex items-start justify-between gap-4">
+                <div>
+                  <h2 className="text-lg font-semibold tracking-tight">Centro de instalaciones</h2>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Registra instalaciones y retiros en un solo flujo. Los cambios se reflejan automáticamente.
+                  </p>
+                </div>
+              </div>
               <InstallationsForm onRegistered={refresh} />
+            </section>
+
+            <section className="space-y-3">
+              <h3 className="text-sm font-semibold text-muted-foreground">Historial de movimientos recientes</h3>
               <InstallationsHistory items={installations} loading={loading} />
-            </div>
+            </section>
           </TabsContent>
 
           {/* DASHBOARD */}

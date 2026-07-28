@@ -7,7 +7,6 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { SimStatusBadge } from '@/components/sim-status-badge';
-import { BarcodeScanner } from '@/components/barcode-scanner';
 import {
   Dialog,
   DialogContent,
@@ -22,7 +21,6 @@ import {
   Loader2,
   AlertTriangle,
   Info,
-  ScanLine,
   MapPin,
   Check,
 } from 'lucide-react';
@@ -58,7 +56,6 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
   const [loading, setLoading] = useState(false);
   const [existingSim, setExistingSim] = useState<Sim | null | undefined>(undefined);
   const [simFocused, setSimFocused] = useState(false);
-  const [scannerOpen, setScannerOpen] = useState(false);
 
   const [locationQuery, setLocationQuery] = useState('');
   const [locationFocused, setLocationFocused] = useState(false);
@@ -70,31 +67,29 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
   const [createLocationConfirmOpen, setCreateLocationConfirmOpen] = useState(false);
   const [transferConfirmOpen, setTransferConfirmOpen] = useState(false);
   const [pendingTransfer, setPendingTransfer] = useState<PendingTransfer | null>(null);
-  const [retireActivePlanConfirmOpen, setRetireActivePlanConfirmOpen] = useState(false);
+  const [retireContractedConfirmOpen, setRetireContractedConfirmOpen] = useState(false);
   const [pendingRetireSim, setPendingRetireSim] = useState<Sim | null>(null);
-  const [scanConfirmOpen, setScanConfirmOpen] = useState(false);
-  const [pendingScannedSim, setPendingScannedSim] = useState('');
 
   const locationInputRef = useRef<HTMLInputElement>(null);
-  const simInputRef = useRef<HTMLInputElement>(null);
+
+  async function loadReferenceData() {
+    const [locationsRes, installationsRes, simsRes] = await Promise.all([
+      supabase.from('locations').select('*').order('name', { ascending: true }),
+      supabase
+        .from('installations')
+        .select('*')
+        .eq('action', 'instalar')
+        .order('installed_at', { ascending: false }),
+      supabase.from('sims').select('*').order('sim_number', { ascending: true }),
+    ]);
+
+    setAllLocations((locationsRes.data as Location[]) ?? []);
+    setAllInstallations((installationsRes.data as Installation[]) ?? []);
+    setAllSims((simsRes.data as Sim[]) ?? []);
+  }
 
   useEffect(() => {
-    supabase
-      .from('locations')
-      .select('*')
-      .order('name', { ascending: true })
-      .then(({ data }) => setAllLocations((data as Location[]) ?? []));
-    supabase
-      .from('installations')
-      .select('*')
-      .eq('action', 'instalar')
-      .order('installed_at', { ascending: false })
-      .then(({ data }) => setAllInstallations((data as Installation[]) ?? []));
-    supabase
-      .from('sims')
-      .select('*')
-      .order('sim_number', { ascending: true })
-      .then(({ data }) => setAllSims((data as Sim[]) ?? []));
+    loadReferenceData();
   }, []);
 
   const currentSimByLocation = useMemo(() => {
@@ -224,58 +219,13 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
       description: `Lectura detectada: ${cleaned}. Puedes editarla antes de registrar.`,
     });
 
-    // Si no existe, dejamos el valor en el input para edición manual confirmada.
+    // Si no existe, dejamos el valor en el input para edición manual.
     setSimNumber(cleaned);
-    requestAnimationFrame(() => {
-      simInputRef.current?.focus();
-      simInputRef.current?.select();
-    });
-  }
-
-  async function handleScanDetected(code: string) {
-    const cleaned = code.replace(/\D/g, '').trim();
-
-    if (!isPlausibleIccid(cleaned)) {
-      toast.warning('Lectura OCR poco confiable', {
-        description: `Se detectó ${cleaned || 'vacío'}. Verifica y escribe el SIM manualmente.`,
-      });
-      return;
-    }
-
-    setPendingScannedSim(cleaned);
-    setScanConfirmOpen(true);
-  }
-
-  async function confirmAndLookupScannedSim() {
-    const candidate = pendingScannedSim;
-    setScanConfirmOpen(false);
-    if (!candidate) return;
-    await lookupScannedSim(candidate);
-  }
-
-  function editScannedSimManually() {
-    const candidate = pendingScannedSim;
-    setScanConfirmOpen(false);
-    if (!candidate) return;
-    setExistingSim(undefined);
-    setSimNumber(candidate);
-    requestAnimationFrame(() => {
-      simInputRef.current?.focus();
-      simInputRef.current?.select();
-    });
-    toast.info('Puedes editar el número escaneado antes de buscar o registrar.');
-  }
-
-  function rescanSim() {
-    setScanConfirmOpen(false);
-    setPendingScannedSim('');
-    setScannerOpen(true);
   }
 
   function selectSimSuggestion(s: Sim) {
     setSimNumber(s.sim_number);
     setExistingSim(s);
-    simInputRef.current?.blur();
   }
 
   async function checkSim(value: string) {
@@ -437,6 +387,7 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
       }
 
       resetForm();
+      await loadReferenceData();
       onRegistered();
     } catch (err) {
       toast.error('Ocurrió un error al registrar el movimiento');
@@ -454,7 +405,7 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
       const hasActivePlanFromMaster = !!sim?.plan && !sim.needs_review;
       if (hasActivePlanFromMaster) {
         setPendingRetireSim(sim);
-        setRetireActivePlanConfirmOpen(true);
+        setRetireContractedConfirmOpen(true);
         return;
       }
 
@@ -517,9 +468,14 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
     doSubmit(false);
   }
 
-  function confirmRetireActivePlan() {
-    setRetireActivePlanConfirmOpen(false);
+  function confirmRetireWithClaim() {
+    setRetireContractedConfirmOpen(false);
     doSubmit(false, ACTIVE_PLAN_RETIRE_NOTE_TAG);
+  }
+
+  function confirmRetireWithoutClaim() {
+    setRetireContractedConfirmOpen(false);
+    doSubmit(false);
   }
 
   async function confirmTransferSim() {
@@ -614,22 +570,9 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="sim">Número de SIM *</Label>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setScannerOpen(true)}
-                    className="h-7 gap-1.5 px-2 text-xs text-primary hover:text-primary"
-                  >
-                    <ScanLine className="h-3.5 w-3.5" />
-                    Escanear
-                  </Button>
-                </div>
+                <Label htmlFor="sim">Número de SIM *</Label>
                 <div className="relative">
                   <Input
-                    ref={simInputRef}
                     id="sim"
                     value={simNumber}
                     onChange={(e) => {
@@ -828,12 +771,6 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
             </Button>
           </form>
         </CardContent>
-
-        <BarcodeScanner
-          open={scannerOpen}
-          onOpenChange={setScannerOpen}
-          onDetected={handleScanDetected}
-        />
       </Card>
 
       <Dialog open={replaceDialogOpen} onOpenChange={setReplaceDialogOpen}>
@@ -870,40 +807,6 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
               )}
               Sí, reemplazar
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={scanConfirmOpen} onOpenChange={setScanConfirmOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Confirmar SIM detectada</DialogTitle>
-            <DialogDescription>
-              El lector detectó este número. Elige cómo continuar para evitar errores de OCR.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3 rounded-lg bg-muted p-4 text-sm">
-            <div className="flex justify-between gap-3">
-              <span className="text-muted-foreground">Número leído:</span>
-              <span className="break-all font-mono font-medium">{pendingScannedSim}</span>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Consejo: si no coincide exactamente con la tarjeta, usa "Editar" o "Reescanear".
-            </p>
-          </div>
-          <DialogFooter className="gap-2 sm:justify-between">
-            <Button variant="outline" onClick={rescanSim}>
-              <ScanLine className="mr-2 h-4 w-4" />
-              Reescanear
-            </Button>
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={editScannedSimManually}>
-                Editar
-              </Button>
-              <Button onClick={confirmAndLookupScannedSim}>
-                Usar y buscar
-              </Button>
-            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -982,12 +885,12 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={retireActivePlanConfirmOpen} onOpenChange={setRetireActivePlanConfirmOpen}>
+      <Dialog open={retireContractedConfirmOpen} onOpenChange={setRetireContractedConfirmOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Retiro de SIM con plan activo</DialogTitle>
+            <DialogTitle>Retiro de SIM contratada</DialogTitle>
             <DialogDescription>
-              Esta SIM aparece en la lista madre contratada (columna G con plan activo).
+              Esta SIM pertenece a la base contratada. ¿Actualmente está sin internet?
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 rounded-lg bg-muted p-4 text-sm">
@@ -999,17 +902,19 @@ export function InstallationsForm({ onRegistered }: InstallationsFormProps) {
               <span className="text-muted-foreground">Plan:</span>
               <span className="text-right font-medium">{pendingRetireSim?.plan || 'Con plan activo'}</span>
             </div>
-            <p className="text-xs text-muted-foreground">
-              Si continúas, el retiro quedará registrado con marca de reclamo para informes.
-            </p>
+            <p className="text-xs text-muted-foreground">Si respondes que sí, se marcará para reclamo al operador.</p>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setRetireActivePlanConfirmOpen(false)}>
+            <Button variant="outline" onClick={() => setRetireContractedConfirmOpen(false)}>
               Cancelar
             </Button>
-            <Button onClick={confirmRetireActivePlan} disabled={loading}>
+            <Button variant="secondary" onClick={confirmRetireWithoutClaim} disabled={loading}>
+              {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ArrowUpFromLine className="mr-2 h-4 w-4" />}
+              No, retirar normal
+            </Button>
+            <Button onClick={confirmRetireWithClaim} disabled={loading}>
               {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <AlertTriangle className="mr-2 h-4 w-4" />}
-              Sí, retirar y marcar reclamo
+              Sí, marcar reclamo
             </Button>
           </DialogFooter>
         </DialogContent>
