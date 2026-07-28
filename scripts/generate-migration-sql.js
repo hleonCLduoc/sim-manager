@@ -10,9 +10,14 @@ const worksheet = workbook.Sheets[workbook.SheetNames[0]];
 const data = xlsx.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
 const rows = data.slice(1);
 
-const sims = [];
+const contractedBySim = new Map(); // sim -> { sim_number, plan }
+const installedBySim = new Map(); // sim -> installation payload
 const locationMap = new Map(); // key: name|detail -> { id, name, detail }
-const installations = [];
+
+const anomalies = {
+  installedNotContracted: [],
+  duplicateInstalledRows: [],
+};
 
 function normalize(str) {
   return String(str || '').trim();
@@ -27,55 +32,91 @@ function excelDateToIso(excelDate) {
 }
 
 rows.forEach((row, idx) => {
+  const g = normalize(row[6]); // Base de SIMs contratadas
+  const plan = normalize(row[7]);
+
+  if (!g) return;
+
+  // Maestro contratado (columna G/H), una sola vez por SIM.
+  if (!contractedBySim.has(g)) {
+    contractedBySim.set(g, {
+      sim_number: g,
+      plan: plan || null,
+    });
+  }
+});
+
+rows.forEach((row, idx) => {
   const bus = normalize(row[0]);
   const linea = normalize(row[1]);
   const imei = normalize(row[2]);
   const d = normalize(row[3]);
-  const g = normalize(row[6]);
-  const plan = normalize(row[7]);
-  const i = normalize(row[8]);
   const actualizado = row[10];
 
-  if (!g) return;
+  // Regla de negocio: D es la SIM instalada actualmente en A/B.
+  if (!d) return;
 
-  const isInstalled = i === g;
-  const status = isInstalled ? 'instalada' : 'libre';
+  // Debe existir primero en base contratada G.
+  if (!contractedBySim.has(d)) {
+    anomalies.installedNotContracted.push({ row: idx + 2, sim: d, bus, linea });
+    return;
+  }
 
-  sims.push({
-    sim_number: g,
-    plan: plan || null,
-    status,
-    imei: isInstalled ? (imei || null) : null,
-    needs_review: false,
-  });
-
-  if (isInstalled) {
-    const locationName = bus || 'Sin ubicación';
-    const locationDetail = linea || null;
-    const locKey = `${locationName}|${locationDetail || ''}`;
-
-    if (!locationMap.has(locKey)) {
-      locationMap.set(locKey, {
-        id: uuidv4(),
-        name: locationName,
-        detail: locationDetail,
-      });
-    }
-
-    const location = locationMap.get(locKey);
-
-    installations.push({
-      id: uuidv4(),
-      sim_number: g,
-      location_id: location.id,
-      location_name: location.name,
-      location_detail: location.detail,
-      imei: imei || null,
-      action: 'instalar',
-      installed_at: excelDateToIso(actualizado) || new Date().toISOString(),
-      notes: d && d !== g ? `SIM física anterior registrada en Excel: ${d}` : null,
+  if (installedBySim.has(d)) {
+    const previous = installedBySim.get(d);
+    anomalies.duplicateInstalledRows.push({
+      sim: d,
+      previousRow: previous.row,
+      newRow: idx + 2,
     });
   }
+
+  installedBySim.set(d, {
+    row: idx + 2,
+    id: uuidv4(),
+    sim_number: d,
+    location_name: bus || 'Sin ubicación',
+    location_detail: linea || null,
+    imei: imei || null,
+    action: 'instalar',
+    installed_at: excelDateToIso(actualizado) || new Date().toISOString(),
+    notes: null,
+  });
+});
+
+const sims = Array.from(contractedBySim.values()).map((sim) => {
+  const installed = installedBySim.get(sim.sim_number);
+  return {
+    sim_number: sim.sim_number,
+    plan: sim.plan,
+    status: installed ? 'instalada' : 'libre',
+    imei: installed ? installed.imei : null,
+    needs_review: false,
+  };
+});
+
+const installations = Array.from(installedBySim.values()).map((inst) => {
+  const locKey = `${inst.location_name}|${inst.location_detail || ''}`;
+  if (!locationMap.has(locKey)) {
+    locationMap.set(locKey, {
+      id: uuidv4(),
+      name: inst.location_name,
+      detail: inst.location_detail,
+    });
+  }
+
+  const location = locationMap.get(locKey);
+  return {
+    id: inst.id,
+    sim_number: inst.sim_number,
+    location_id: location.id,
+    location_name: location.name,
+    location_detail: location.detail,
+    imei: inst.imei,
+    action: inst.action,
+    installed_at: inst.installed_at,
+    notes: inst.notes,
+  };
 });
 
 const lines = [];
@@ -128,6 +169,16 @@ console.log(`Archivo generado: ${outputPath}`);
 console.log(`- SIMs: ${sims.length}`);
 console.log(`- Ubicaciones: ${locationMap.size}`);
 console.log(`- Instalaciones: ${installations.length}`);
+console.log(`- D no contratadas en G (omitidas): ${anomalies.installedNotContracted.length}`);
+console.log(`- D duplicadas (se mantiene última fila): ${anomalies.duplicateInstalledRows.length}`);
+
+if (anomalies.installedNotContracted.length > 0) {
+  console.log('Primeras D no contratadas en G:', anomalies.installedNotContracted.slice(0, 10));
+}
+
+if (anomalies.duplicateInstalledRows.length > 0) {
+  console.log('Primeras D duplicadas:', anomalies.duplicateInstalledRows.slice(0, 10));
+}
 
 function escapeSql(value) {
   if (value === null || value === undefined) return 'NULL';

@@ -9,11 +9,7 @@ ATENCION:
 
 BEGIN;
 
--- 1) Eliminar historial primero por FK
-TRUNCATE TABLE installations;
-
--- 2) Limpiar maestro y catalogo
-TRUNCATE TABLE sims;
-TRUNCATE TABLE locations;
+-- Truncar tablas relacionadas en una sola sentencia para respetar FKs
+TRUNCATE TABLE installations, sims, locations;
 
 COMMIT;
